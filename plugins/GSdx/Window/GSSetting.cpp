@@ -64,8 +64,6 @@ const char* dialog_message(int ID, bool* updateText) {
 				"Step 1: Increase the value in the left box and keep the value in the right box set to the same value as the left box to find and remove a bad effect.\n"
 				"Step 2: If a bad effect found with Step 1 is not completely removed yet, then without changing the value in the left box, try increasing the value in the box to right until the effect is completely gone.\n\n"
 				"Note: Increase the value in the right box and keep the value in the left box set to \"1\" to reproduce the old skipdraw behaviour.";
-		case IDC_ALPHAHACK:
-			return "Different alpha handling. Can work around some shadow problems.";
 		case IDC_OFFSETHACK:
 			return "Might fix some misaligned fog, bloom, or blend effect.\n"
 				"The preferred option is Normal (Vertex) as it is most likely to resolve misalignment issues.\n"
