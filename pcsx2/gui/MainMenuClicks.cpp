@@ -1,5 +1,5 @@
 /*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
+ *  Copyright (C) 2002-2021  PCSX2 Dev Team
  *
  *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU Lesser General Public License as published by the Free Software Found-
@@ -39,6 +39,9 @@
 
 #include "Utilities/IniInterface.h"
 
+#include "fmt/core.h"
+#include "wx/numdlg.h"
+
 #ifndef DISABLE_RECORDING
 #include "Recording/InputRecording.h"
 #include "Recording/InputRecordingControls.h"
@@ -48,9 +51,16 @@
 
 using namespace Dialogs;
 
+extern std::atomic_bool init_gspanel;
+
 void MainEmuFrame::Menu_SysSettings_Click(wxCommandEvent& event)
 {
-	AppOpenDialog<SysConfigDialog>(this);
+	AppOpenModalDialog<SysConfigDialog>(wxEmptyString, this);
+}
+
+void MainEmuFrame::Menu_IPC_Settings_Click(wxCommandEvent& event)
+{
+	AppOpenDialog<IPCDialog>(this);
 }
 
 void MainEmuFrame::Menu_AudioSettings_Click(wxCommandEvent& event)
@@ -65,7 +75,7 @@ void MainEmuFrame::Menu_McdSettings_Click(wxCommandEvent& event)
 	AppOpenModalDialog<McdConfigDialog>(wxEmptyString, this);
 }
 
-void MainEmuFrame::Menu_NetworkSettings_Click(wxCommandEvent &event)
+void MainEmuFrame::Menu_NetworkSettings_Click(wxCommandEvent& event)
 {
 	DEV9configure();
 }
@@ -80,21 +90,41 @@ void MainEmuFrame::Menu_PADSettings_Click(wxCommandEvent& event)
 	PADconfigure();
 }
 
-void MainEmuFrame::Menu_WindowSettings_Click(wxCommandEvent &event)
+void MainEmuFrame::Menu_GSSettings_Click(wxCommandEvent& event)
+{
+	ScopedCoreThreadPause paused_core;
+	bool is_frame_init = !(wxGetApp().GetGsFramePtr() == nullptr);
+	bool need_shutdown = GetMTGS().IsClosed();
+	init_gspanel = false;
+	freezeData fP = {0, nullptr};
+	MTGS_FreezeData sstate = {&fP, 0};
+	if (is_frame_init)
+	{
+		GetMTGS().Freeze(FREEZE_SIZE, sstate);
+		fP.data = new char[fP.size];
+		GetMTGS().Freeze(FREEZE_SAVE, sstate);
+		GetMTGS().Suspend(true);
+	}
+	GSconfigure();
+	if (is_frame_init)
+	{
+		GetMTGS().Freeze(FREEZE_LOAD, sstate);
+		delete[] fP.data;
+	}
+	if (need_shutdown)
+		GetMTGS().Suspend(true);
+	init_gspanel = true;
+	paused_core.AllowResume();
+}
+
+void MainEmuFrame::Menu_WindowSettings_Click(wxCommandEvent& event)
 {
 	wxCommandEvent evt(pxEvt_SetSettingsPage);
 	evt.SetString(L"GS Window");
 	AppOpenDialog<SysConfigDialog>(this)->GetEventHandler()->ProcessEvent(evt);
 }
 
-void MainEmuFrame::Menu_GSSettings_Click(wxCommandEvent& event)
-{
-	wxCommandEvent evt(pxEvt_SetSettingsPage);
-	evt.SetString(L"GS");
-	AppOpenDialog<SysConfigDialog>(this)->GetEventHandler()->ProcessEvent(evt);
-}
-
-void MainEmuFrame::Menu_SelectPluginsBios_Click(wxCommandEvent& event)
+void MainEmuFrame::Menu_SelectBios_Click(wxCommandEvent& event)
 {
 	AppOpenDialog<ComponentsConfigDialog>(this);
 }
@@ -112,8 +142,7 @@ static void WipeSettings()
 	wxRemoveFile(GetUiSettingsFilename());
 	wxRemoveFile(GetVmSettingsFilename());
 
-	// FIXME: wxRmdir doesn't seem to work here for some reason (possible file sharing issue
-	// with a plugin that leaves a file handle dangling maybe?).  But deleting the inis folder
+	// FIXME: wxRmdir doesn't seem to work here for some reason but deleting the inis folder
 	// manually from explorer does work.  Can't think of a good work-around at the moment. --air
 
 	//wxRmdir( GetSettingsFolder().ToString() );
@@ -142,7 +171,7 @@ void MainEmuFrame::Menu_ResetAllSettings_Click(wxCommandEvent& event)
 	{
 		ScopedCoreThreadPopup suspender;
 		if (!Msgbox::OkCancel(pxsFmt(
-								  pxE(L"This command clears %s settings and allows you to re-run the First-Time Wizard.  You will need to manually restart %s after this operation.\n\nWARNING!!  Click OK to delete *ALL* settings for %s and force-close the app, losing any current emulation progress.  Are you absolutely sure?\n\n(note: settings for plugins are unaffected)"), WX_STR(pxGetAppName()), WX_STR(pxGetAppName()), WX_STR(pxGetAppName())),
+								  pxE(L"This command clears %s settings and allows you to re-run the First-Time Wizard.  You will need to manually restart %s after this operation.\n\nWARNING!!  Click OK to delete *ALL* settings for %s and force-close the app, losing any current emulation progress.  Are you absolutely sure?"), WX_STR(pxGetAppName()), WX_STR(pxGetAppName()), WX_STR(pxGetAppName())),
 							  _("Reset all settings?")))
 		{
 			suspender.AllowResume();
@@ -160,6 +189,11 @@ void MainEmuFrame::Menu_ResetAllSettings_Click(wxCommandEvent& event)
 //   (anything else) - Standard swap, no reset.  (hotswap!)
 wxWindowID SwapOrReset_Iso(wxWindow* owner, IScopedCoreThread& core_control, const wxString& isoFilename, const wxString& descpart1)
 {
+	if (GSDump::isRunning)
+	{
+		wxMessageBox("Please close the GS debugger first before playing a game", _("GS Debugger"), wxICON_ERROR);
+		return wxID_CANCEL;
+	}
 	wxWindowID result = wxID_CANCEL;
 
 	if ((g_Conf->CdvdSource == CDVD_SourceType::Iso) && (isoFilename == g_Conf->CurrentIso))
@@ -173,11 +207,15 @@ wxWindowID SwapOrReset_Iso(wxWindow* owner, IScopedCoreThread& core_control, con
 		core_control.DisallowResume();
 		wxDialogWithHelpers dialog(owner, _("Confirm ISO image change"));
 
-		dialog += dialog.Heading(descpart1);
-		dialog += dialog.GetCharHeight();
+		dialog += dialog.Heading(descpart1); // New lines already applied
 		dialog += dialog.Text(isoFilename);
 		dialog += dialog.GetCharHeight();
 		dialog += dialog.Heading(_("Do you want to swap discs or boot the new image (via system reset)?"));
+
+#ifndef DISABLE_RECORDING
+		if (g_InputRecording.IsActive() && g_InputRecording.GetInputRecordingData().FromSaveState())
+			dialog += dialog.Text(_("\n(Warning: The savestate accompanying the active input recording\nmay not be compatible with the new source)"));
+#endif
 
 		result = pxIssueConfirmation(dialog, MsgButtons().Reset().Cancel().Custom(_("Swap Disc"), "swap"));
 		if (result == wxID_CANCEL)
@@ -213,9 +251,14 @@ wxWindowID SwapOrReset_Iso(wxWindow* owner, IScopedCoreThread& core_control, con
 //   (anything else) - Standard swap, no reset.  (hotswap!)
 wxWindowID SwapOrReset_Disc(wxWindow* owner, IScopedCoreThread& core, const wxString driveLetter)
 {
+	if (GSDump::isRunning)
+	{
+		wxMessageBox("Please close the GS debugger first before playing a game", _("GS Debugger"), wxICON_ERROR);
+		return wxID_CANCEL;
+	}
 	wxWindowID result = wxID_CANCEL;
 
-	if ((g_Conf->CdvdSource == CDVD_SourceType::Disc) && (driveLetter == g_Conf->Folders.RunDisc.GetPath()))
+	if ((g_Conf->CdvdSource == CDVD_SourceType::Disc) && (driveLetter == g_Conf->Folders.RunDisc))
 	{
 		core.AllowResume();
 		return result;
@@ -229,6 +272,11 @@ wxWindowID SwapOrReset_Disc(wxWindow* owner, IScopedCoreThread& core, const wxSt
 		dialog += dialog.Heading("New drive selected: " + driveLetter);
 		dialog += dialog.GetCharHeight();
 		dialog += dialog.Heading(_("Do you want to swap discs or boot the new disc (via system reset)?"));
+
+#ifndef DISABLE_RECORDING
+		if (g_InputRecording.IsActive() && g_InputRecording.GetInputRecordingData().FromSaveState())
+			dialog += dialog.Text(_("\n(Warning: The savestate accompanying the active input recording\nmay not be compatible with the new source)"));
+#endif
 
 		result = pxIssueConfirmation(dialog, MsgButtons().Reset().Cancel().Custom(_("Swap Disc"), "swap"));
 		if (result == wxID_CANCEL)
@@ -256,6 +304,11 @@ wxWindowID SwapOrReset_Disc(wxWindow* owner, IScopedCoreThread& core, const wxSt
 
 wxWindowID SwapOrReset_CdvdSrc(wxWindow* owner, CDVD_SourceType newsrc)
 {
+	if (GSDump::isRunning)
+	{
+		wxMessageBox("Please close the GS debugger first before playing a game", _("GS Debugger"), wxICON_ERROR);
+		return wxID_CANCEL;
+	}
 	if (newsrc == g_Conf->CdvdSource)
 		return wxID_CANCEL;
 	wxWindowID result = wxID_CANCEL;
@@ -271,6 +324,11 @@ wxWindowID SwapOrReset_CdvdSrc(wxWindow* owner, CDVD_SourceType newsrc)
 
 		dialog += dialog.Heading(changeMsg + L"\n\n" +
 								 _("Do you want to swap discs or boot the new image (system reset)?"));
+
+#ifndef DISABLE_RECORDING
+		if (g_InputRecording.IsActive() && g_InputRecording.GetInputRecordingData().FromSaveState())
+			dialog += dialog.Text(_("\n(Warning: The savestate accompanying the active input recording\nmay not be compatible with the new source)"));
+#endif
 
 		result = pxIssueConfirmation(dialog, MsgButtons().Reset().Cancel().Custom(_("Swap Disc"), "swap"));
 
@@ -340,8 +398,8 @@ bool MainEmuFrame::_DoSelectIsoBrowser(wxString& result)
 
 	wxArrayString isoFilterTypes;
 
-	isoFilterTypes.Add(pxsFmt(_("All Supported (%s)"), WX_STR((isoSupportedLabel + L" .dump" + L" .gz" + L" .cso"))));
-	isoFilterTypes.Add(isoSupportedList + L";*.dump" + L";*.gz" + L";*.cso");
+	isoFilterTypes.Add(pxsFmt(_("All Supported (%s)"), WX_STR((isoSupportedLabel + L" .dump" + L" .gz" + L" .cso" + L" .chd"))));
+	isoFilterTypes.Add(isoSupportedList + L";*.dump" + L";*.gz" + L";*.cso" + L";*.chd");
 
 	isoFilterTypes.Add(pxsFmt(_("Disc Images (%s)"), WX_STR(isoSupportedLabel)));
 	isoFilterTypes.Add(isoSupportedList);
@@ -349,8 +407,8 @@ bool MainEmuFrame::_DoSelectIsoBrowser(wxString& result)
 	isoFilterTypes.Add(pxsFmt(_("Blockdumps (%s)"), L".dump"));
 	isoFilterTypes.Add(L"*.dump");
 
-	isoFilterTypes.Add(pxsFmt(_("Compressed (%s)"), L".gz .cso"));
-	isoFilterTypes.Add(L"*.gz;*.cso");
+	isoFilterTypes.Add(pxsFmt(_("Compressed (%s)"), L".gz .cso .chd"));
+	isoFilterTypes.Add(L"*.gz;*.cso;*.chd");
 
 	isoFilterTypes.Add(_("All Files (*.*)"));
 	isoFilterTypes.Add(L"*.*");
@@ -387,6 +445,11 @@ bool MainEmuFrame::_DoSelectELFBrowser()
 
 void MainEmuFrame::_DoBootCdvd()
 {
+	if (GSDump::isRunning)
+	{
+		wxMessageBox("Please close the GS debugger first before playing a game", _("GS Debugger"), wxICON_ERROR);
+		return;
+	}
 	ScopedCoreThreadPause paused_core;
 
 	if (g_Conf->CdvdSource == CDVD_SourceType::Iso)
@@ -433,7 +496,7 @@ void MainEmuFrame::_DoBootCdvd()
 			return;
 		}
 	}
-	
+
 	sApp.SysExecute(g_Conf->CdvdSource);
 }
 
@@ -456,12 +519,23 @@ void MainEmuFrame::Menu_CdvdSource_Click(wxCommandEvent& event)
 	}
 
 	SwapOrReset_CdvdSrc(this, newsrc);
+#ifndef DISABLE_RECORDING
+	if (!g_InputRecording.IsActive())
+#endif
+		ApplyCDVDStatus();
 }
 
 void MainEmuFrame::Menu_BootCdvd_Click(wxCommandEvent& event)
 {
-	g_Conf->EmuOptions.UseBOOT2Injection = g_Conf->EnableFastBoot;
-	_DoBootCdvd();
+#ifndef DISABLE_RECORDING
+	if (g_InputRecording.IsActive())
+		g_InputRecording.GoToFirstFrame(this);
+	else
+#endif
+	{
+		g_Conf->EmuOptions.UseBOOT2Injection = g_Conf->EnableFastBoot;
+		_DoBootCdvd();
+	}
 }
 
 void MainEmuFrame::Menu_FastBoot_Click(wxCommandEvent& event)
@@ -564,9 +638,9 @@ void MainEmuFrame::Menu_EnableCheats_Click(wxCommandEvent&)
 	AppSaveSettings();
 }
 
-void MainEmuFrame::Menu_EnableIPC_Click(wxCommandEvent&)
+void MainEmuFrame::Menu_IPC_Enable_Click(wxCommandEvent&)
 {
-	g_Conf->EmuOptions.EnableIPC = GetMenuBar()->IsChecked(MenuId_EnableIPC);
+	g_Conf->EmuOptions.EnableIPC = GetMenuBar()->IsChecked(MenuId_IPC_Enable);
 	AppApplySettings();
 	AppSaveSettings();
 }
@@ -744,8 +818,7 @@ void MainEmuFrame::Menu_SuspendResume_Click(wxCommandEvent& event)
 		return;
 
 	// Disable the menu item.  The state of the menu is indeterminate until the core thread
-	// has responded (it updates status after the plugins are loaded and emulation has
-	// engaged successfully).
+	// has responded (it updates status after emulation has engaged successfully).
 
 	EnableMenuItem(MenuId_Sys_SuspendResume, false);
 	GetSysExecutorThread().PostEvent(new SysExecEvent_ToggleSuspend());
@@ -753,28 +826,42 @@ void MainEmuFrame::Menu_SuspendResume_Click(wxCommandEvent& event)
 
 void MainEmuFrame::Menu_SysShutdown_Click(wxCommandEvent& event)
 {
-	UI_DisableSysShutdown();
-	Console.SetTitle("PCSX2 Program Log");
-	CoreThread.Reset();
-}
-
-void MainEmuFrame::Menu_ConfigPlugin_Click(wxCommandEvent& event)
-{
-	const int eventId = event.GetId() - MenuId_PluginBase_Settings;
-
-	PluginsEnum_t pid = (PluginsEnum_t)(eventId / PluginMenuId_Interval);
-
-	// Don't try to call the Patches config dialog until we write one.
-	if (event.GetId() == MenuId_Config_Patches)
-		return;
-
-	if (!pxAssertDev((eventId >= 0) || (pid < PluginId_Count), "Invalid plugin identifier passed to ConfigPlugin event handler."))
-		return;
-
-	wxWindowDisabler disabler;
-	ScopedCoreThreadPause paused_core(new SysExecEvent_SaveSinglePlugin(pid));
-
-	GetCorePlugins().Configure(pid);
+	bool doShutdown = true;
+#ifndef DISABLE_RECORDING
+	if (!g_InputRecording.IsActive())
+	{
+		if (g_InputRecordingControls.IsPaused())
+			g_InputRecordingControls.Resume();
+	}
+	else
+	{
+		const bool initiallyPaused = g_InputRecordingControls.IsPaused();
+		if (!initiallyPaused)
+			g_InputRecordingControls.Pause();
+		wxWindowID result = wxID_CANCEL;
+		wxDialogWithHelpers dialog(this, _("Shutdown & Close Input Recording"));
+		dialog += dialog.Heading(L"\nShutting down emulation will close the active input recording file.\nProceed?");
+		result = pxIssueConfirmation(dialog, MsgButtons().Close().Cancel());
+		if (result == wxID_CLOSE)
+		{
+			StopInputRecording();
+			g_InputRecordingControls.Resume();
+		}
+		else if (!initiallyPaused)
+		{
+			g_InputRecordingControls.Resume();
+			doShutdown = false;
+		}
+	}
+#endif
+	if (doShutdown)
+	{
+		if (m_capturingVideo)
+			VideoCaptureToggle();
+		UI_DisableSysShutdown();
+		Console.SetTitle("PCSX2 Program Log");
+		CoreThread.Reset();
+	}
 }
 
 void MainEmuFrame::Menu_Debug_Open_Click(wxCommandEvent& event)
@@ -843,81 +930,72 @@ void MainEmuFrame::Menu_ShowAboutBox(wxCommandEvent& event)
 	AppOpenDialog<AboutBoxDialog>(this);
 }
 
-void MainEmuFrame::Menu_Capture_Video_Record_Click(wxCommandEvent& event)
+void MainEmuFrame::Menu_ShowGSDump(wxCommandEvent& event)
+{
+	AppOpenDialog<GSDumpDialog>(this);
+}
+
+void MainEmuFrame::Menu_Capture_Video_ToggleCapture_Click(wxCommandEvent& event)
 {
 	ScopedCoreThreadPause paused_core;
 	paused_core.AllowResume();
-
-	m_capturingVideo = true;
-	VideoCaptureUpdate();
+	VideoCaptureToggle();
 }
 
-void MainEmuFrame::Menu_Capture_Video_Stop_Click(wxCommandEvent& event)
+void MainEmuFrame::Menu_Capture_Video_IncludeAudio_Click(wxCommandEvent& event)
 {
-	ScopedCoreThreadPause paused_core;
-	paused_core.AllowResume();
-
-	m_capturingVideo = false;
-	VideoCaptureUpdate();
+	g_Conf->AudioCapture.EnableAudio = GetMenuBar()->IsChecked(MenuId_Capture_Video_IncludeAudio);
+	ApplySettings();
 }
 
-void MainEmuFrame::VideoCaptureUpdate()
+void MainEmuFrame::VideoCaptureToggle()
 {
 	GetMTGS().WaitGS(); // make sure GS is in sync with the audio stream when we start.
+	m_capturingVideo = !m_capturingVideo;
 	if (m_capturingVideo)
 	{
 		// start recording
 
 		// make the recording setup dialog[s] pseudo-modal also for the main PCSX2 window
-		// (the GSdx dialog is already properly modal for the GS window)
+		// (the GS dialog is already properly modal for the GS window)
 		bool needsMainFrameEnable = false;
-		if (GetMainFramePtr() && GetMainFramePtr()->IsEnabled())
+		if (IsEnabled())
 		{
 			needsMainFrameEnable = true;
-			GetMainFramePtr()->Disable();
+			Disable();
 		}
 
-		if (GSsetupRecording)
+		// GSsetupRecording can be aborted/canceled by the user. Don't go on to record the audio if that happens
+		std::string filename;
+		if (GSsetupRecording(filename))
 		{
-			// GSsetupRecording can be aborted/canceled by the user. Don't go on to record the audio if that happens
-			std::wstring* filename = nullptr;
-			if (filename = GSsetupRecording(m_capturingVideo))
+			if (!g_Conf->AudioCapture.EnableAudio || SPU2setupRecording(&filename))
 			{
-				SPU2setupRecording(m_capturingVideo, filename);
-				delete filename;
+				m_submenuVideoCapture.Enable(MenuId_Capture_Video_Record, false);
+				m_submenuVideoCapture.Enable(MenuId_Capture_Video_Stop, true);
+				m_submenuVideoCapture.Enable(MenuId_Capture_Video_IncludeAudio, false);
 			}
 			else
 			{
-				// recording dialog canceled by the user. align our state
+				GSendRecording();
 				m_capturingVideo = false;
 			}
 		}
-		else
-		{
-			// the GS doesn't support recording.
-			SPU2setupRecording(m_capturingVideo, nullptr);
-		}
+		else // recording dialog canceled by the user. align our state
+			m_capturingVideo = false;
 
-		if (GetMainFramePtr() && needsMainFrameEnable)
-			GetMainFramePtr()->Enable();
+		if (needsMainFrameEnable)
+			Enable();
 	}
 	else
 	{
 		// stop recording
-		if (GSsetupRecording)
-			GSsetupRecording(m_capturingVideo);
-		SPU2setupRecording(m_capturingVideo, nullptr);
-	}
-
-	if (m_capturingVideo)
-	{
-		m_submenuVideoCapture.FindItem(MenuId_Capture_Video_Record)->Enable(false);
-		m_submenuVideoCapture.FindItem(MenuId_Capture_Video_Stop)->Enable(true);
-	}
-	else
-	{
-		m_submenuVideoCapture.FindItem(MenuId_Capture_Video_Record)->Enable(true);
-		m_submenuVideoCapture.FindItem(MenuId_Capture_Video_Stop)->Enable(false);
+		GSendRecording();
+		if (g_Conf->AudioCapture.EnableAudio)
+			SPU2endRecording();
+		m_submenuVideoCapture.Enable(MenuId_Capture_Video_Record, true);
+		m_submenuVideoCapture.Enable(MenuId_Capture_Video_Stop, false);
+		m_submenuVideoCapture.Enable(MenuId_Capture_Video_IncludeAudio, true);
 	}
 }
 
@@ -927,10 +1005,10 @@ void MainEmuFrame::Menu_Capture_Screenshot_Screenshot_Click(wxCommandEvent& even
 	{
 		return;
 	}
-	GSmakeSnapshot(g_Conf->Folders.Snapshots.ToAscii());
+	GSmakeSnapshot(g_Conf->Folders.Snapshots.ToString().char_str());
 }
 
-void MainEmuFrame::Menu_Capture_Screenshot_Screenshot_As_Click(wxCommandEvent &event)
+void MainEmuFrame::Menu_Capture_Screenshot_Screenshot_As_Click(wxCommandEvent& event)
 {
 	if (!CoreThread.IsOpen())
 		return;
@@ -943,7 +1021,7 @@ void MainEmuFrame::Menu_Capture_Screenshot_Screenshot_As_Click(wxCommandEvent &e
 	wxFileDialog fileDialog(this, _("Select a file"), g_Conf->Folders.Snapshots.ToAscii(), wxEmptyString, "PNG files (*.png)|*.png", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
 
 	if (fileDialog.ShowModal() == wxID_OK)
-		GSmakeSnapshot(fileDialog.GetPath().c_str());
+		GSmakeSnapshot((char*)fileDialog.GetPath().char_str());
 
 	// Resume emulation
 	if (!wasPaused)
@@ -953,9 +1031,10 @@ void MainEmuFrame::Menu_Capture_Screenshot_Screenshot_As_Click(wxCommandEvent &e
 #ifndef DISABLE_RECORDING
 void MainEmuFrame::Menu_Recording_New_Click(wxCommandEvent& event)
 {
-	const bool initiallyPaused = g_InputRecordingControls.IsPaused();
+	const bool emulation_initially_paused = CoreThread.IsPaused();
+	const bool recording_initially_paused = g_InputRecordingControls.IsPaused();
 
-	if (!initiallyPaused)
+	if (!emulation_initially_paused && !recording_initially_paused)
 		g_InputRecordingControls.PauseImmediately();
 
 	NewRecordingFrame* newRecordingFrame = wxGetApp().GetNewRecordingFramePtr();
@@ -970,9 +1049,9 @@ void MainEmuFrame::Menu_Recording_New_Click(wxCommandEvent& event)
 				return;
 			}
 		}
-		
-		if (!initiallyPaused)
-			g_InputRecordingControls.Resume();
+
+		if (!emulation_initially_paused && !recording_initially_paused)
+			g_InputRecordingControls.ResumeImmediately();
 	}
 }
 
@@ -993,15 +1072,33 @@ void MainEmuFrame::Menu_Recording_Play_Click(wxCommandEvent& event)
 	}
 
 	StopInputRecording();
-	if (!g_InputRecording.Play(openFileDialog.GetPath()))
+	if (!g_InputRecording.Play(this, openFileDialog.GetPath()))
 	{
 		if (!initiallyPaused)
 			g_InputRecordingControls.Resume();
 		return;
 	}
-	
+
 	if (!g_InputRecording.GetInputRecordingData().FromSaveState())
 		StartInputRecording();
+}
+
+void MainEmuFrame::ApplyFirstFrameStatus()
+{
+	wxMenuItem* cdvd_menu = m_menuSys.FindChildItem(MenuId_Boot_CDVD);
+
+	wxString keyCodeStr;
+	if (GSFrame* gsFrame = wxGetApp().GetGsFramePtr())
+		if (GSPanel* viewport = gsFrame->GetViewport())
+			keyCodeStr = '\t' + viewport->GetAssociatedKeyCode(("GoToFirstFrame"));
+
+	cdvd_menu->SetItemLabel(L"Restart Recording" + keyCodeStr);
+	if (g_InputRecording.GetInputRecordingData().FromSaveState())
+		cdvd_menu->SetHelp(L"Loads the savestate that accompanies the active input recording");
+	else
+		cdvd_menu->SetHelp(L"Reboots Emulation");
+		
+	UpdateStatusBar();
 }
 
 void MainEmuFrame::Menu_Recording_Stop_Click(wxCommandEvent& event)
@@ -1009,11 +1106,25 @@ void MainEmuFrame::Menu_Recording_Stop_Click(wxCommandEvent& event)
 	StopInputRecording();
 }
 
+void MainEmuFrame::Menu_Recording_Config_FrameAdvance(wxCommandEvent& event)
+{
+	long result = wxGetNumberFromUser(_("Enter the number of frames to advance per advance"), _("Number of Frames"), _("Configure Frame Advance"), g_Conf->inputRecording.m_frame_advance_amount, 1, INT_MAX);
+	if (result != -1)
+	{
+		g_Conf->inputRecording.m_frame_advance_amount = result;
+		g_InputRecordingControls.setFrameAdvanceAmount(result);
+		wxString frame_advance_label = wxString(_("Configure Frame Advance"));
+		frame_advance_label.Append(fmt::format(" ({})", result));
+		m_submenu_recording_settings.SetLabel(MenuId_Recording_Config_FrameAdvance, frame_advance_label);
+	}
+}
+
 void MainEmuFrame::StartInputRecording()
 {
 	m_menuRecording.FindChildItem(MenuId_Recording_New)->Enable(false);
 	m_menuRecording.FindChildItem(MenuId_Recording_Stop)->Enable(true);
 	m_menuRecording.FindChildItem(MenuId_Recording_ToggleRecordingMode)->Enable(true);
+	ApplyFirstFrameStatus();
 }
 
 void MainEmuFrame::StopInputRecording()
@@ -1024,6 +1135,7 @@ void MainEmuFrame::StopInputRecording()
 		m_menuRecording.FindChildItem(MenuId_Recording_New)->Enable(true);
 		m_menuRecording.FindChildItem(MenuId_Recording_Stop)->Enable(false);
 		m_menuRecording.FindChildItem(MenuId_Recording_ToggleRecordingMode)->Enable(false);
+		ApplyCDVDStatus();
 	}
 }
 

@@ -13,7 +13,7 @@
  *  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "../deviceproxy.h"
+#include "USB/deviceproxy.h"
 #include "audiodeviceproxy.h"
 
 namespace usb_mic
@@ -37,6 +37,10 @@ namespace usb_mic
 		static const TCHAR* LongAPIName(const std::string& name);
 		static int Configure(int port, const std::string& api, void* data);
 		static int Freeze(int mode, USBDevice* dev, void* data);
+		static std::vector<std::string> SubTypes()
+		{
+			return {};
+		}
 	};
 
 } // namespace usb_mic

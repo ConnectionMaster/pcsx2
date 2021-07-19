@@ -29,17 +29,11 @@
 #include "GS.h"
 
 #include "CDVD/CDVD.h"
-#include "SPU2/spu2.h"
 #include "USB/USB.h"
 #include "Elfheader.h"
 #include "Patch.h"
 #include "R5900Exceptions.h"
 #include "Sio.h"
-#ifdef _WIN32
-#include "PAD/Windows/PAD.h"
-#else
-#include "PAD/Linux/PAD.h"
-#endif
 
 #ifndef DISABLE_RECORDING
 #include "Recording/InputRecordingControls.h"
@@ -49,6 +43,15 @@ __aligned16 SysMtgsThread mtgsThread;
 __aligned16 AppCoreThread CoreThread;
 
 typedef void (AppCoreThread::*FnPtr_CoreThreadMethod)();
+
+
+namespace GameInfo
+{
+	wxString gameName;
+	wxString gameSerial;
+	wxString gameCRC;
+	wxString gameVersion;
+}; // namespace GameInfo
 
 // --------------------------------------------------------------------------------------
 //  SysExecEvent_InvokeCoreThreadMethod
@@ -175,9 +178,6 @@ void AppCoreThread::Resume()
 		GetSysExecutorThread().PostEvent(SysExecEvent_InvokeCoreThreadMethod(&AppCoreThread::Resume));
 		return;
 	}
-
-	GetCorePlugins().Init();
-	SPU2init();
 	_parent::Resume();
 }
 
@@ -308,7 +308,7 @@ static int loadGameSettings(Pcsx2Config& dest, const GameDatabaseSchema::GameEnt
 		{
 			// Legacy note - speedhacks are setup in the GameDB as integer values, but
 			// are effectively booleans like the gamefixes
-			bool mode = game.speedHacks.at(key) ? 1: 0;
+			bool mode = game.speedHacks.at(key) ? 1 : 0;
 			dest.Speedhacks.Set(id, mode);
 			PatchesCon->WriteLn(L"(GameDB) Setting Speedhack '" + key + "' to [mode=%d]", mode);
 			gf++;
@@ -405,14 +405,11 @@ static void _ApplySettings(const Pcsx2Config& src, Pcsx2Config& fixup)
 		fixup.GS.VsyncEnable = VsyncMode::Off;
 	}
 
-	wxString gameCRC;
-	wxString gameSerial;
 	wxString gamePatch;
 	wxString gameFixes;
 	wxString gameCheats;
 	wxString gameWsHacks;
 
-	wxString gameName;
 	wxString gameCompat;
 	wxString gameMemCardFilter;
 
@@ -422,9 +419,12 @@ static void _ApplySettings(const Pcsx2Config& src, Pcsx2Config& fixup)
 	// settings as if the game is already running (title, loadeding patches, etc).
 	bool ingame = (ElfCRC && (g_GameLoading || g_GameStarted));
 	if (ingame)
-		gameCRC.Printf(L"%8.8x", ElfCRC);
+		GameInfo::gameCRC.Printf(L"%8.8x", ElfCRC);
+	else
+		GameInfo::gameCRC = L""; // Needs to be reset when rebooting otherwise previously loaded patches may load
+
 	if (ingame && !DiscSerial.IsEmpty())
-		gameSerial = L" [" + DiscSerial + L"]";
+		GameInfo::gameSerial = L" [" + DiscSerial + L"]";
 
 	const wxString newGameKey(ingame ? SysGetDiscID() : SysGetBiosDiscID());
 	const bool verbose(newGameKey != curGameKey && ingame);
@@ -442,15 +442,15 @@ static void _ApplySettings(const Pcsx2Config& src, Pcsx2Config& fixup)
 			GameDatabaseSchema::GameEntry game = GameDB->findGame(std::string(curGameKey));
 			if (game.isValid)
 			{
-				gameName = game.name;
-				gameName += L" (" + game.region + L")";
+				GameInfo::gameName = game.name;
+				GameInfo::gameName += L" (" + game.region + L")";
 				gameCompat = L" [Status = " + compatToStringWX(game.compat) + L"]";
 				gameMemCardFilter = game.memcardFiltersAsString();
 			}
 
 			if (fixup.EnablePatches)
 			{
-				if (int patches = LoadPatchesFromGamesDB(gameCRC, game))
+				if (int patches = LoadPatchesFromGamesDB(GameInfo::gameCRC, game))
 				{
 					gamePatch.Printf(L" [%d Patches]", patches);
 					PatchesCon->WriteLn(Color_Green, "(GameDB) Patches Loaded: %d", patches);
@@ -466,30 +466,30 @@ static void _ApplySettings(const Pcsx2Config& src, Pcsx2Config& fixup)
 	else
 		sioSetGameSerial(curGameKey);
 
-	if (gameName.IsEmpty() && gameSerial.IsEmpty() && gameCRC.IsEmpty())
+	if (GameInfo::gameName.IsEmpty() && GameInfo::gameSerial.IsEmpty() && GameInfo::gameCRC.IsEmpty())
 	{
 		// if all these conditions are met, it should mean that we're currently running BIOS code.
 		// Chances are the BiosChecksum value is still zero or out of date, however -- because
 		// the BIos isn't loaded until after initial calls to ApplySettings.
 
-		gameName = L"Booting PS2 BIOS... ";
+		GameInfo::gameName = L"Booting PS2 BIOS... ";
 	}
 
 	//Till the end of this function, entry CRC will be 00000000
-	if (!gameCRC.Length())
+	if (!GameInfo::gameCRC.Length())
 	{
 		Console.WriteLn(Color_Gray, "Patches: No CRC found, using 00000000 instead.");
-		gameCRC = L"00000000";
+		GameInfo::gameCRC = L"00000000";
 	}
 
 	// regular cheat patches
 	if (fixup.EnableCheats)
-		gameCheats.Printf(L" [%d Cheats]", LoadPatchesFromDir(gameCRC, GetCheatsFolder(), L"Cheats"));
+		gameCheats.Printf(L" [%d Cheats]", LoadPatchesFromDir(GameInfo::gameCRC, GetCheatsFolder(), L"Cheats"));
 
 	// wide screen patches
 	if (fixup.EnableWideScreenPatches)
 	{
-		if (int numberLoadedWideScreenPatches = LoadPatchesFromDir(gameCRC, GetCheatsWsFolder(), L"Widescreen hacks"))
+		if (int numberLoadedWideScreenPatches = LoadPatchesFromDir(GameInfo::gameCRC, GetCheatsWsFolder(), L"Widescreen hacks"))
 		{
 			gameWsHacks.Printf(L" [%d widescreen hacks]", numberLoadedWideScreenPatches);
 			Console.WriteLn(Color_Gray, "Found widescreen patches in the cheats_ws folder --> skipping cheats_ws.zip");
@@ -498,7 +498,7 @@ static void _ApplySettings(const Pcsx2Config& src, Pcsx2Config& fixup)
 		{
 			// No ws cheat files found at the cheats_ws folder, try the ws cheats zip file.
 			wxString cheats_ws_archive = Path::Combine(PathDefs::GetProgramDataDir(), wxFileName(L"cheats_ws.zip"));
-			int numberDbfCheatsLoaded = LoadPatchesFromZip(gameCRC, cheats_ws_archive);
+			int numberDbfCheatsLoaded = LoadPatchesFromZip(GameInfo::gameCRC, cheats_ws_archive);
 			PatchesCon->WriteLn(Color_Green, "(Wide Screen Cheats DB) Patches Loaded: %d", numberDbfCheatsLoaded);
 			gameWsHacks.Printf(L" [%d widescreen hacks]", numberDbfCheatsLoaded);
 		}
@@ -507,8 +507,8 @@ static void _ApplySettings(const Pcsx2Config& src, Pcsx2Config& fixup)
 	// When we're booting, the bios loader will set a a title which would be more interesting than this
 	// to most users - with region, version, etc, so don't overwrite it with patch info. That's OK. Those
 	// users which want to know the status of the patches at the bios can check the console content.
-	wxString consoleTitle = gameName + gameSerial;
-	consoleTitle += L" [" + gameCRC.MakeUpper() + L"]" + gameCompat + gameFixes + gamePatch + gameCheats + gameWsHacks;
+	wxString consoleTitle = GameInfo::gameName + GameInfo::gameSerial;
+	consoleTitle += L" [" + GameInfo::gameCRC.MakeUpper() + L"]" + gameCompat + gameFixes + gamePatch + gameCheats + gameWsHacks;
 	if (ingame)
 		Console.SetTitle(consoleTitle);
 
@@ -637,13 +637,6 @@ bool AppCoreThread::StateCheckInThread()
 	return _parent::StateCheckInThread();
 }
 
-void AppCoreThread::UploadStateCopy(const VmStateBuffer& copy)
-{
-	ScopedCoreThreadPause paused_core;
-	_parent::UploadStateCopy(copy);
-	paused_core.AllowResume();
-}
-
 static uint m_except_threshold = 0;
 
 void AppCoreThread::ExecuteTaskInThread()
@@ -729,28 +722,9 @@ void SysExecEvent_CoreThreadClose::InvokeEvent()
 
 void SysExecEvent_CoreThreadPause::InvokeEvent()
 {
-#ifdef PCSX2_DEVBUILD
-	bool CorePluginsAreOpen = GetCorePlugins().AreOpen();
-	ScopedCoreThreadPause paused_core;
-	_post_and_wait(paused_core);
-
-	// All plugins should be initialized and opened upon resuming from
-	// a paused state.  If the thread that puased us changed plugin status, it should
-	// have used Close instead.
-	if (CorePluginsAreOpen)
-	{
-		CorePluginsAreOpen = GetCorePlugins().AreOpen();
-		pxAssertDev(CorePluginsAreOpen, "Invalid plugin close/shutdown detected during paused CoreThread; please Stop/Suspend the core instead.");
-	}
-	paused_core.AllowResume();
-
-#else
-
 	ScopedCoreThreadPause paused_core;
 	_post_and_wait(paused_core);
 	paused_core.AllowResume();
-
-#endif
 }
 
 
@@ -883,15 +857,8 @@ ScopedCoreThreadPause::~ScopedCoreThreadPause()
 }
 
 ScopedCoreThreadPopup::ScopedCoreThreadPopup()
+	: m_scoped_core(std::unique_ptr<BaseScopedCoreThread>(new ScopedCoreThreadPause()))
 {
-	// The old style GUI (without GSopen2) must use a full close of the CoreThread, in order to
-	// ensure that the GS window isn't blocking the popup, and to avoid crashes if the GS window
-	// is maximized or fullscreen.
-
-	if (!GSopen2)
-		m_scoped_core = std::unique_ptr<BaseScopedCoreThread>(new ScopedCoreThreadClose());
-	else
-		m_scoped_core = std::unique_ptr<BaseScopedCoreThread>(new ScopedCoreThreadPause());
 };
 
 void ScopedCoreThreadPopup::AllowResume()

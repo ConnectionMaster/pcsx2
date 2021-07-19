@@ -178,11 +178,36 @@ static int jo_processDU(jo_bits_t *bits, float A[64], const unsigned char htdc[9
 	return Q[0];
 }
 
+void write_ipu_header(jo_bits_t* bits, int width, int height) {
+	jo_writeBits(bits, 0x69, 8);
+	jo_writeBits(bits, 0x70, 8);
+	jo_writeBits(bits, 0x75, 8);
+	jo_writeBits(bits, 0x6D, 8);
+
+	jo_writeBits(bits, 0x00, 8);
+	jo_writeBits(bits, 0x00, 8);
+	jo_writeBits(bits, 0x00, 8);
+	jo_writeBits(bits, 0x00, 8);
+
+	jo_writeBits(bits, width & 0xFF,  8);
+	jo_writeBits(bits, width >> 8,    8);
+	jo_writeBits(bits, height & 0xFF, 8);
+	jo_writeBits(bits, height >> 8,   8);
+
+	jo_writeBits(bits, 0x01, 8);
+	jo_writeBits(bits, 0x00, 8);
+	jo_writeBits(bits, 0x00, 8);
+	jo_writeBits(bits, 0x00, 8);
+}
+
 unsigned long jo_write_mpeg(unsigned char *mpeg_buf, const unsigned char *raw, int width, int height, int format, int flipx, int flipy) {
 	int lastDCY = 128, lastDCCR = 128, lastDCCB = 128;
 	unsigned char *head = mpeg_buf;
 	jo_bits_t bits = {mpeg_buf};
 
+	write_ipu_header(&bits, width, height);
+
+	jo_writeBits(&bits, 0x00, 8);
 	for (int vblock = 0; vblock < (height+15)/16; vblock++) {
 		for (int hblock = 0; hblock < (width+15)/16; hblock++) {
 			if (vblock == 0 && hblock == 0) {
@@ -206,11 +231,7 @@ unsigned long jo_write_mpeg(unsigned char *mpeg_buf, const unsigned char *raw, i
 					if (flipy) y = height - 1 - y;
 					const unsigned char *c = raw + y*width*4+x*4;
 					float r, g, b;
-					if (flipx && flipy) {
-						r = c[2], g = c[1], b = c[0];
-					} else {
-						r = c[0], g = c[1], b = c[2];
-					}
+					r = c[0], g = c[1], b = c[2];
 					Y[i] = (0.299f*r + 0.587f*g + 0.114f*b) * (219.f/255) + 16;
 					CBx[i] = (-0.299f*r - 0.587f*g + 0.886f*b) * (224.f/255) + 128;
 					CRx[i] = (0.701f*r - 0.587f*g - 0.114f*b) * (224.f/255) + 128;
@@ -222,7 +243,7 @@ unsigned long jo_write_mpeg(unsigned char *mpeg_buf, const unsigned char *raw, i
 					CR[i] = (CRx[j] + CRx[j+1] + CRx[j+16] + CRx[j+17]) * 0.25f;
 				}
 			} else
-			if (format == JO_RGB24) {
+			if (format == JO_BGR24 || format == JO_RGB24) {
 				for (int i=0; i<256; ++i) {
 					int y = vblock*16+(i/16);
 					int x = hblock*16+(i&15);
@@ -232,7 +253,7 @@ unsigned long jo_write_mpeg(unsigned char *mpeg_buf, const unsigned char *raw, i
 					if (flipy) y = height - 1 - y;
 					const unsigned char *c = raw + y*width*3+x*3;
 					float r, g, b;
-					if (flipx && flipy) {
+					if (format == JO_BGR24) {
 						r = c[2], g = c[1], b = c[0];
 					} else {
 						r = c[0], g = c[1], b = c[2];

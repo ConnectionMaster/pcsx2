@@ -15,14 +15,11 @@
 
 #pragma once
 
-#ifndef __GAMEPADCONFIGURATION_H__
-#define __GAMEPADCONFIGURATION_H__
-
 #include <wx/wx.h>
 
-#include "../GamePad.h"
+#include "../Device.h"
 #include "../keyboard.h"
-#include "../PAD.h"
+#include "../Global.h"
 
 static const s32 rumble_slider_id = wxID_HIGHEST + 200 + 1;
 static const s32 joy_slider_id = wxID_HIGHEST + 200 + 2;
@@ -40,7 +37,6 @@ class GamepadConfiguration : public wxDialog
 	void repopulate();
 
 	// Events
-	void OnOk(wxCommandEvent&);
 	void OnSliderReleased(wxCommandEvent&);
 	void OnCheckboxChange(wxCommandEvent&);
 	void OnChoiceChange(wxCommandEvent&);
@@ -49,5 +45,3 @@ public:
 	GamepadConfiguration(int, wxWindow*);
 	void InitGamepadConfiguration();
 };
-
-#endif // __GAMEPADCONFIGURATION_H__

@@ -672,17 +672,13 @@ extern SndOutModule* XAudio2Out;
 extern SndOutModule* PortaudioOut;
 #endif
 extern SndOutModule* const SDLOut;
-#ifdef __linux__
-extern SndOutModule* AlsaOut;
-#endif
-
 extern SndOutModule* mods[];
 
 // =====================================================================================================
 
 extern bool WavRecordEnabled;
 
-extern void RecordStart(std::wstring* filename);
+extern bool RecordStart(const std::string* filename);
 extern void RecordStop();
 extern void RecordWrite(const StereoOut16& sample);
 

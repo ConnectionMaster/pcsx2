@@ -54,14 +54,7 @@ u32 BiosChecksum;
 u32 BiosRegion;
 bool NoOSD;
 wxString BiosDescription;
-const BiosDebugInformation* CurrentBiosInformation;
-
-const BiosDebugInformation biosVersions[] = {
-	// USA     v02.00(14/06/2004)  Console
-	{ 0x00000200, 0xD778DB8D, 0x8001a640 },
-	// Europe  v02.00(14/06/2004)
-	{ 0x00000200, 0X9C7B59D3, 0x8001a640 },
-};
+BiosDebugInformation CurrentBiosInformation;
 
 // --------------------------------------------------------------------------------------
 //  Exception::BiosLoadFailed  (implementations)
@@ -311,15 +304,7 @@ void LoadBIOS()
 		if (g_Conf->CurrentIRX.Length() > 3)
 			LoadIrx(g_Conf->CurrentIRX, &eeMem->ROM[0x3C0000]);
 
-		CurrentBiosInformation = NULL;
-		for (size_t i = 0; i < sizeof(biosVersions)/sizeof(biosVersions[0]); i++)
-		{
-			if (biosVersions[i].biosChecksum == BiosChecksum && biosVersions[i].biosVersion == BiosVersion)
-			{
-				CurrentBiosInformation = &biosVersions[i];
-				break;
-			}
-		}
+		CurrentBiosInformation.threadListAddr = 0;
 	}
 	catch (Exception::BadStream& ex)
 	{

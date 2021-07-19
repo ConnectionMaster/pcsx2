@@ -1,5 +1,5 @@
 /*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
+ *  Copyright (C) 2002-2021  PCSX2 Dev Team
  *
  *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU Lesser General Public License as published by the Free Software Found-
@@ -14,7 +14,7 @@
  */
 
 #include "PrecompiledHeader.h"
-#include "../Global.h"
+#include "SPU2/Global.h"
 #include "Dialogs.h"
 #include "Config.h"
 #include <math.h>
@@ -29,20 +29,21 @@ static const int LATENCY_MIN = 3;
 static const int LATENCY_MIN_TS = 15;
 
 // MIXING
-int Interpolation = 4;
+int Interpolation = 5;
 /* values:
-		0: no interpolation (use nearest)
-		1. linear interpolation
-		2. cubic interpolation
-		3. hermite interpolation
-		4. catmull-rom interpolation
+		0: No interpolation (uses nearest)
+		1. Linear interpolation
+		2. Cubic interpolation
+		3. Hermite interpolation
+		4. Catmull-Rom interpolation
+		5. Gaussian interpolation
 */
 
 bool EffectsDisabled = false;
 
 float FinalVolume; // Global
 bool AdvancedVolumeControl;
-float VolumeAdjustFLdb; // decibels settings, cos audiophiles love that
+float VolumeAdjustFLdb; // Decibels settings, because audiophiles love that.
 float VolumeAdjustCdb;
 float VolumeAdjustFRdb;
 float VolumeAdjustBLdb;
@@ -50,7 +51,7 @@ float VolumeAdjustBRdb;
 float VolumeAdjustSLdb;
 float VolumeAdjustSRdb;
 float VolumeAdjustLFEdb;
-float VolumeAdjustFL; // linear coefs calcualted from decibels,
+float VolumeAdjustFL; // Linear coefficients calculated from decibels,
 float VolumeAdjustC;
 float VolumeAdjustFR;
 float VolumeAdjustBL;
@@ -64,7 +65,7 @@ bool postprocess_filter_dealias = false;
 
 // OUTPUT
 int SndOutLatencyMS = 100;
-int SynchMode = 0; // Time Stretch, Async or Disabled
+int SynchMode = 0; // Time Stretch, Async or Disabled.
 
 u32 OutputModule = 0;
 
@@ -84,7 +85,7 @@ int dplLevel = 0;
 
 void ReadSettings()
 {
-	Interpolation = CfgReadInt(L"MIXING", L"Interpolation", 4);
+	Interpolation = CfgReadInt(L"MIXING", L"Interpolation", 5);
 
 	EffectsDisabled = CfgReadBool(L"MIXING", L"Disable_Effects", false);
 	postprocess_filter_dealias = CfgReadBool(L"MIXING", L"DealiasFilter", false);
@@ -115,20 +116,20 @@ void ReadSettings()
 	dplLevel = CfgReadInt(L"OUTPUT", L"DplDecodingLevel", 0);
 	SndOutLatencyMS = CfgReadInt(L"OUTPUT", L"Latency", 100);
 
-	if ((SynchMode == 0) && (SndOutLatencyMS < LATENCY_MIN_TS)) // can't use low-latency with timestretcher atm
+	if ((SynchMode == 0) && (SndOutLatencyMS < LATENCY_MIN_TS)) // Can't use low-latency with timestretcher at the moment.
 		SndOutLatencyMS = LATENCY_MIN_TS;
 	else if (SndOutLatencyMS < LATENCY_MIN)
 		SndOutLatencyMS = LATENCY_MIN;
 
 	wchar_t omodid[128];
 
-	// portaudio occasionally has issues selecting the proper default audio device.
-	// let's use xaudio2 until this is sorted (rama)
+	// Portaudio occasionally has issues selecting the proper default audio device.
+	// Let's use xaudio2 until this is sorted (rama).
 
 	//	CfgReadStr(L"OUTPUT", L"Output_Module", omodid, 127, PortaudioOut->GetIdent());
 	CfgReadStr(L"OUTPUT", L"Output_Module", omodid, 127, XAudio2Out->GetIdent());
 
-	// find the driver index of this module:
+	// Find the driver index of this module:
 	OutputModule = FindOutputModuleById(omodid);
 
 	CfgReadStr(L"DSP PLUGIN", L"Filename", dspPlugin, 255, L"");
@@ -227,11 +228,12 @@ BOOL CALLBACK ConfigProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		case WM_INITDIALOG:
 		{
 			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_RESETCONTENT, 0, 0);
-			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_ADDSTRING, 0, (LPARAM)L"0 - Nearest (Fastest/bad quality)");
-			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_ADDSTRING, 0, (LPARAM)L"1 - Linear (Simple/okay sound)");
-			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_ADDSTRING, 0, (LPARAM)L"2 - Cubic (Artificial highs)");
-			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_ADDSTRING, 0, (LPARAM)L"3 - Hermite (Better highs)");
-			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_ADDSTRING, 0, (LPARAM)L"4 - Catmull-Rom (PS2-like/slow)");
+			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_ADDSTRING, 0, (LPARAM)L"0 - Nearest (Fastest / worst quality)");
+			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_ADDSTRING, 0, (LPARAM)L"1 - Linear (Simple / okay sound)");
+			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_ADDSTRING, 0, (LPARAM)L"2 - Cubic (Fake highs / okay sound)");
+			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_ADDSTRING, 0, (LPARAM)L"3 - Hermite (Better highs / okay sound)");
+			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_ADDSTRING, 0, (LPARAM)L"4 - Catmull-Rom (PS2-like / good sound)");
+			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_ADDSTRING, 0, (LPARAM)L"5 - Gaussian (PS2-like / great sound)");
 			SendDialogMsg(hWnd, IDC_INTERPOLATE, CB_SETCURSEL, Interpolation, 0);
 
 			SendDialogMsg(hWnd, IDC_SYNCHMODE, CB_RESETCONTENT, 0, 0);
@@ -261,7 +263,7 @@ BOOL CALLBACK ConfigProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			double minlat = (SynchMode == 0) ? LATENCY_MIN_TS : LATENCY_MIN;
 			int minexp = (int)(pow(minlat + 1, 1.0 / 3.0) * 128.0);
 			int maxexp = (int)(pow((double)LATENCY_MAX + 2, 1.0 / 3.0) * 128.0);
-			INIT_SLIDER(IDC_LATENCY_SLIDER, minexp, maxexp, 200, 42, 1);
+			INIT_SLIDER(IDC_LATENCY_SLIDER, minexp, maxexp, 200, 13, 15);
 
 			SendDialogMsg(hWnd, IDC_LATENCY_SLIDER, TBM_SETPOS, TRUE, (int)((pow((double)SndOutLatencyMS, 1.0 / 3.0) * 128.0) + 1));
 			swprintf_s(temp, L"%d ms (avg)", SndOutLatencyMS);

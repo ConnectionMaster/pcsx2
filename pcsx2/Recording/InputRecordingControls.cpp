@@ -1,5 +1,5 @@
 /*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
+ *  Copyright (C) 2002-2021  PCSX2 Dev Team
  *
  *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU Lesser General Public License as published by the Free Software Found-
@@ -29,69 +29,52 @@
 
 InputRecordingControls g_InputRecordingControls;
 
-void InputRecordingControls::HandleFrameAdvanceAndPausing()
+void InputRecordingControls::CheckPauseStatus()
 {
-	// This function can be called multiple times per frame via Counters::rcntUpdate_vSync,
-	// often this is twice per frame but this may vary as Counters.cpp mentions the
-	// vsync timing can change.
-	//
-	// When loading a recording file or rebooting with a recording active, lock will be enabled.
-	// Emulation will be forced into and remain in a paused state until the transition in progress
-	// has completed - signaled when g_framecount and frameCountTracker are equal.
+	frame_advance_frame_counter++;
+	if (frameAdvancing && frame_advance_frame_counter >= frames_per_frame_advance)
+	{
+		frameAdvancing = false;
+		pauseEmulation = true;
+	}
+
+	if (g_InputRecording.IsActive())
+	{
+		g_InputRecording.IncrementFrameCounter();
+
+		if (switchToReplay)
+		{
+			g_InputRecording.SetToReplayMode();
+			switchToReplay = false;
+		}
+		
+		if (IsFinishedReplaying() || g_InputRecording.GetFrameCounter() == INT_MAX)
+		{
+			if (!pauseEmulation)
+				pauseEmulation = true;
+			StopCapture();
+		}
+	}
+	g_InputRecording.LogAndRedraw();
+}
+
+void InputRecordingControls::HandlePausingAndLocking()
+{
+	// Explicit frame locking
 	if (frameLock)
 	{
-		if (g_FrameCount == frameCountTracker)
+		if (g_FrameCount == frameLockTracker)
 		{
 			frameLock = false;
 			Resume();
 		}
 		else if (!emulationCurrentlyPaused && CoreThread.IsOpen() && CoreThread.IsRunning())
 		{
-			pauseEmulation = true;
-			resumeEmulation = false;
 			emulationCurrentlyPaused = true;
 			CoreThread.PauseSelf();
 		}
-		return;
 	}
-	// As a safeguard, use the global g_FrameCount to know when the frame counter has truly changed.
-	//
-	// NOTE - Do not mutate g_FrameCount or use it's value to set the input recording's internal frame counter
-	else if (frameCountTracker != g_FrameCount)
-	{
-		frameCountTracker = g_FrameCount;
-		g_InputRecording.IncrementFrameCounter();
-	}
-	else
-	{
-		if (pauseEmulation)
-		{
-			emulationCurrentlyPaused = true;
-			CoreThread.PauseSelf();
-		}
-		return;
-	}
-
-	if (switchToReplay)
-	{
-		g_InputRecording.SetToReplayMode();
-		switchToReplay = false;
-	}
-
-	if ((g_InputRecording.IsReplaying() &&
-		 g_InputRecording.GetFrameCounter() >= g_InputRecording.GetInputRecordingData().GetTotalFrames()) ||
-		g_InputRecording.GetFrameCounter() == INT_MAX)
-		pauseEmulation = true;
-
-	// If we haven't yet advanced atleast a single frame from when we paused, setup things to be paused
-	if (frameAdvancing && frameAdvanceMarker < g_InputRecording.GetFrameCounter())
-	{
-		frameAdvancing = false;
-		pauseEmulation = true;
-	}
-
-	// Pause emulation if we need to (either due to frame advancing, or pause has been explicitly toggled on)
-	if (pauseEmulation && CoreThread.IsOpen() && CoreThread.IsRunning())
+	else if (pauseEmulation && CoreThread.IsOpen() && CoreThread.IsRunning())
 	{
 		emulationCurrentlyPaused = true;
 		CoreThread.PauseSelf();
@@ -100,7 +83,7 @@ void InputRecordingControls::HandleFrameAdvanceAndPausing()
 
 void InputRecordingControls::ResumeCoreThreadIfStarted()
 {
-	if (resumeEmulation && CoreThread.IsOpen() && CoreThread.IsPaused())
+	if (resumeEmulation && CoreThread.IsOpen())
 	{
 		CoreThread.Resume();
 		resumeEmulation = false;
@@ -110,15 +93,19 @@ void InputRecordingControls::ResumeCoreThreadIfStarted()
 
 void InputRecordingControls::FrameAdvance()
 {
-	if (g_InputRecording.IsReplaying() &&
-		g_InputRecording.GetFrameCounter() >= g_InputRecording.GetInputRecordingData().GetTotalFrames())
+	if (!IsFinishedReplaying())
 	{
-		g_InputRecording.SetToRecordMode();
-		return;
+		frameAdvancing = true;
+		frame_advance_frame_counter = 0;
+		Resume();
 	}
-	frameAdvanceMarker = g_InputRecording.GetFrameCounter();
-	frameAdvancing = true;
-	Resume();
+	else
+		g_InputRecording.SetToRecordMode();
+}
+
+void InputRecordingControls::setFrameAdvanceAmount(int amount)
+{
+	frames_per_frame_advance = amount;
 }
 
 bool InputRecordingControls::IsFrameAdvancing()
@@ -128,7 +115,7 @@ bool InputRecordingControls::IsFrameAdvancing()
 
 bool InputRecordingControls::IsPaused()
 {
-	return (emulationCurrentlyPaused && CoreThread.IsOpen() && CoreThread.IsPaused());
+	return emulationCurrentlyPaused && CoreThread.IsOpen() && CoreThread.IsPaused();
 }
 
 void InputRecordingControls::Pause()
@@ -139,76 +126,93 @@ void InputRecordingControls::Pause()
 
 void InputRecordingControls::PauseImmediately()
 {
-	if (CoreThread.IsPaused())
-		return;
-	Pause();
-	if (CoreThread.IsOpen() && CoreThread.IsRunning())
+	if (!CoreThread.IsPaused())
 	{
-		emulationCurrentlyPaused = true;
-		CoreThread.PauseSelf();
+		Pause();
+		if (CoreThread.IsOpen() && CoreThread.IsRunning())
+		{
+			emulationCurrentlyPaused = true;
+			CoreThread.PauseSelf();
+		}
 	}
 }
 
 void InputRecordingControls::Resume()
 {
-	if (g_InputRecording.IsReplaying() &&
-		g_InputRecording.GetFrameCounter() >= g_InputRecording.GetInputRecordingData().GetTotalFrames())
+	if (!IsFinishedReplaying())
 	{
-		g_InputRecording.SetToRecordMode();
-		return;
+		pauseEmulation = false;
+		resumeEmulation = true;
 	}
-	pauseEmulation = false;
-	resumeEmulation = true;
+	else
+		g_InputRecording.SetToRecordMode();
 }
 
-void InputRecordingControls::SetFrameCountTracker(u32 newFrame)
+void InputRecordingControls::ResumeImmediately()
 {
-	frameCountTracker = newFrame;
-}
-
-void InputRecordingControls::DisableFrameAdvance()
-{
-	frameAdvancing = false;
+	if (CoreThread.IsPaused())
+	{
+		Resume();
+		if (CoreThread.IsRunning())
+		{
+			emulationCurrentlyPaused = false;
+			CoreThread.Resume();
+		}
+	}
 }
 
 void InputRecordingControls::TogglePause()
 {
-	if (pauseEmulation &&
-		g_InputRecording.IsReplaying() &&
-		g_InputRecording.GetFrameCounter() >= g_InputRecording.GetInputRecordingData().GetTotalFrames())
+	if (!pauseEmulation || !IsFinishedReplaying())
 	{
-		g_InputRecording.SetToRecordMode();
-		return;
+		resumeEmulation = pauseEmulation;
+		pauseEmulation = !pauseEmulation;
+		inputRec::log(pauseEmulation ? "Paused Emulation" : "Resumed Emulation");
 	}
-	pauseEmulation = !pauseEmulation;
-	resumeEmulation = !pauseEmulation;
-	inputRec::log(pauseEmulation ? "Paused Emulation" : "Resumed Emulation");
+	else
+		g_InputRecording.SetToRecordMode();
 }
 
 void InputRecordingControls::RecordModeToggle()
 {
-	if (IsPaused() ||
-		g_InputRecording.IsReplaying() ||
-		g_InputRecording.GetFrameCounter() < g_InputRecording.GetInputRecordingData().GetTotalFrames())
-	{
-		if (g_InputRecording.IsReplaying())
-			g_InputRecording.SetToRecordMode();
-		else if (g_InputRecording.IsRecording())
-			g_InputRecording.SetToReplayMode();
-	}
+	if (g_InputRecording.IsReplaying())
+		g_InputRecording.SetToRecordMode();
 	else if (g_InputRecording.IsRecording())
-		switchToReplay = true;
+	{
+		if (IsPaused() || g_InputRecording.GetFrameCounter() < g_InputRecording.GetInputRecordingData().GetTotalFrames())
+			g_InputRecording.SetToReplayMode();
+		else
+			switchToReplay = true;
+	}
 }
 
 void InputRecordingControls::Lock(u32 frame)
 {
 	frameLock = true;
-	frameCountTracker = frame;
-	resumeEmulation = false;
+	frameLockTracker = frame;
+	frameAdvancing = false;
 	//Ensures that g_frameCount can be used to resume emulation after a fast/full boot
 	if (!g_InputRecording.GetInputRecordingData().FromSaveState())
 		g_FrameCount = frame + 1;
 	else
 		sMainFrame.StartInputRecording();
+}
+
+bool InputRecordingControls::IsFinishedReplaying() const
+{
+	return g_InputRecording.IsReplaying() &&
+			g_InputRecording.GetFrameCounter() >= g_InputRecording.GetInputRecordingData().GetTotalFrames();
+}
+
+void InputRecordingControls::StopCapture() const
+{
+	if (MainEmuFrame* mainFrame = GetMainFramePtr())
+	{
+		if (mainFrame->IsCapturing())
+		{
+			mainFrame->VideoCaptureToggle();
+			inputRec::log("Capture completed");
+		}
+	}
 }
 #endif

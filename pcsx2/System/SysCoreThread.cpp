@@ -30,14 +30,15 @@
 #include "SPU2/spu2.h"
 #include "DEV9/DEV9.h"
 #include "USB/USB.h"
+#include "gui/MemoryCardFile.h"
 #ifdef _WIN32
 #include "PAD/Windows/PAD.h"
 #else
 #include "PAD/Linux/PAD.h"
 #endif
 
-#include "../DebugTools/MIPSAnalyst.h"
-#include "../DebugTools/SymbolMap.h"
+#include "DebugTools/MIPSAnalyst.h"
+#include "DebugTools/SymbolMap.h"
 
 #include "Utilities/PageFaultSource.h"
 #include "Utilities/Threading.h"
@@ -50,6 +51,11 @@
 #include "x86emitter/x86_intrin.h"
 
 bool g_CDVDReset = false;
+
+namespace IPCSettings
+{
+	unsigned int slot = IPC_DEFAULT_SLOT;
+};
 
 // --------------------------------------------------------------------------------------
 //  SysCoreThread *External Thread* Implementations
@@ -97,9 +103,7 @@ void SysCoreThread::OnStart()
 
 void SysCoreThread::Start()
 {
-	if (!GetCorePlugins().AreLoaded())
-		return;
-	GetCorePlugins().Init();
+	GSinit();
 	SPU2init();
 	PADinit();
 	DEV9init();
@@ -112,8 +116,6 @@ void SysCoreThread::Start()
 // memory savestates.
 //
 // Exceptions (can occur on first call only):
-//   PluginInitError     - thrown if a plugin fails init (init is performed on the current thread
-//                         on the first time the thread is resumed from it's initial idle state)
 //   ThreadCreationError - Insufficient system resources to create thread.
 //
 void SysCoreThread::OnResumeReady()
@@ -159,7 +161,7 @@ void SysCoreThread::Reset()
 
 
 // Applies a full suite of new settings, which will automatically facilitate the necessary
-// resets of the core and components (including plugins, if needed).  The scope of resetting
+// resets of the core and components.  The scope of resetting
 // is determined by comparing the current settings against the new settings, so that only
 // real differences are applied.
 void SysCoreThread::ApplySettings(const Pcsx2Config& src)
@@ -175,16 +177,6 @@ void SysCoreThread::ApplySettings(const Pcsx2Config& src)
 	m_resetVsyncTimers = (src.GS != EmuConfig.GS);
 
 	const_cast<Pcsx2Config&>(EmuConfig) = src;
-}
-
-void SysCoreThread::UploadStateCopy(const VmStateBuffer& copy)
-{
-	if (!pxAssertDev(IsPaused(), "CoreThread is not paused; new VM state cannot be uploaded."))
-		return;
-
-	memLoadingState loadme(copy);
-	loadme.FreezeAll();
-	m_resetVirtualMachine = false;
 }
 
 // --------------------------------------------------------------------------------------
@@ -270,7 +262,7 @@ void SysCoreThread::GameStartingInThread()
 	if (EmuConfig.EnableIPC && m_IpcState == OFF)
 	{
 		m_IpcState = ON;
-		m_socketIpc = std::make_unique<SocketIPC>(this);
+		m_socketIpc = std::make_unique<SocketIPC>(this, IPCSettings::slot);
 	}
 	if (m_IpcState == ON && m_socketIpc->m_end)
 		m_socketIpc->Start();
@@ -294,7 +286,7 @@ void SysCoreThread::DoCpuExecute()
 
 void SysCoreThread::ExecuteTaskInThread()
 {
-	Threading::EnableHiresScheduler(); // Note that *something* in SPU2 and GSdx also set the timer resolution to 1ms.
+	Threading::EnableHiresScheduler(); // Note that *something* in SPU2 and GS also set the timer resolution to 1ms.
 	m_sem_event.WaitWithoutYield();
 
 	m_mxcsr_saved.bitmask = _mm_getcsr();
@@ -312,18 +304,19 @@ void SysCoreThread::ExecuteTaskInThread()
 
 void SysCoreThread::OnSuspendInThread()
 {
-	GetCorePlugins().Close();
 	DEV9close();
 	USBclose();
 	DoCDVDclose();
 	FWclose();
 	PADclose();
 	SPU2close();
+	FileMcd_EmuClose();
+	GetMTGS().Suspend();
 }
 
 void SysCoreThread::OnResumeInThread(bool isSuspended)
 {
-	GetCorePlugins().Open();
+	GetMTGS().WaitForOpen();
 	if (isSuspended)
 	{
 		DEV9open((void*)pDsp);
@@ -332,6 +325,7 @@ void SysCoreThread::OnResumeInThread(bool isSuspended)
 	FWopen();
 	SPU2open((void*)pDsp);
 	PADopen((void*)pDsp);
+	FileMcd_EmuOpen();
 }
 
 
@@ -352,12 +346,13 @@ void SysCoreThread::OnCleanupInThread()
 	DEV9close();
 	DoCDVDclose();
 	FWclose();
-	GetCorePlugins().Close();
-	GetCorePlugins().Shutdown();
+	FileMcd_EmuClose();
+	GetMTGS().Suspend();
 	USBshutdown();
 	SPU2shutdown();
 	PADshutdown();
 	DEV9shutdown();
+	GetMTGS().Cancel();
 
 	_mm_setcsr(m_mxcsr_saved.bitmask);
 	Threading::DisableHiresScheduler();

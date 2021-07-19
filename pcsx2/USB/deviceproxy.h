@@ -46,6 +46,7 @@ enum DeviceType
 	DEVTYPE_EYETOY,
 	DEVTYPE_BEATMANIA_DADADA,
 	DEVTYPE_SEGA_SEAMIC,
+	DEVTYPE_KEYBOARDMANIA,
 };
 
 struct SelectDeviceName
@@ -79,6 +80,7 @@ public:
 	virtual std::list<std::string> ListAPIs() = 0;
 	virtual const TCHAR* LongAPIName(const std::string& name) = 0;
 	virtual int Freeze(int mode, USBDevice* dev, void* data) = 0;
+	virtual std::vector<std::string> SubTypes() = 0;
 
 	virtual bool IsValidAPI(const std::string& api)
 	{
@@ -125,6 +127,10 @@ public:
 	virtual int Freeze(int mode, USBDevice* dev, void* data)
 	{
 		return T::Freeze(mode, dev, data);
+	}
+	virtual std::vector<std::string> SubTypes()
+	{
+		return T::SubTypes();
 	}
 };
 
@@ -205,7 +211,7 @@ public:
 		return *registerDevice;
 	}
 
-	~RegisterDevice() { }
+	~RegisterDevice() {}
 
 	static void Register();
 	void Unregister();

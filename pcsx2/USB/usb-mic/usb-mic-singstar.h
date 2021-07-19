@@ -15,7 +15,7 @@
 
 #ifndef USBMICSINGSTAR_H
 #define USBMICSINGSTAR_H
-#include "../deviceproxy.h"
+#include "USB/deviceproxy.h"
 #include "audiodeviceproxy.h"
 
 struct USBDevice;
@@ -49,6 +49,10 @@ namespace usb_mic
 		}
 		static int Configure(int port, const std::string& api, void* data);
 		static int Freeze(int mode, USBDevice* dev, void* data);
+		static std::vector<std::string> SubTypes()
+		{
+			return {};
+		}
 	};
 
 	class LogitechMicDevice : public SingstarDevice

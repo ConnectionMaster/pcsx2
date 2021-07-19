@@ -33,14 +33,14 @@
 #include "DebugTools/Debug.h"
 #include "R3000A.h"
 #include "SPU2/spu2.h"
+#include "gui/Dialogs/ModalPopups.h"
 
-// renderswitch - tells GSdx to go into dx9 sw if "renderswitch" is set.
+// renderswitch - tells GS to go into dx9 sw if "renderswitch" is set.
 bool renderswitch = false;
-uint renderswitch_delay = 0;
 
 extern bool switchAR;
 
-static int g_Pcsx2Recording = 0; // true 1 if recording video and sound
+static bool g_Pcsx2Recording = false; // true if recording video and sound
 
 
 KeyAcceleratorCode::KeyAcceleratorCode(const wxKeyEvent& evt)
@@ -389,18 +389,30 @@ namespace Implementations
 
 	void Sys_TakeSnapshot()
 	{
-		if (GSmakeSnapshot(g_Conf->Folders.Snapshots.ToUTF8()))
+		if (GSmakeSnapshot(g_Conf->Folders.Snapshots.ToUTF8().data()))
 			OSDlog(ConsoleColors::Color_Black, true, "Snapshot taken");
 	}
 
 	void Sys_RenderToggle()
 	{
-		if (renderswitch_delay == 0)
+		if (GSDump::isRunning)
+			return;
+		static bool reentrant = false;
+		if (!reentrant)
 		{
-			ScopedCoreThreadPause paused_core(new SysExecEvent_SaveSinglePlugin(PluginId_GS));
+			reentrant = true;
+			ScopedCoreThreadPause paused_core;
+			freezeData fP = {0, nullptr};
+			MTGS_FreezeData sstate = {&fP, 0};
+			GetMTGS().Freeze(FREEZE_SIZE, sstate);
+			fP.data = new char[fP.size];
+			GetMTGS().Freeze(FREEZE_SAVE, sstate);
+			GetMTGS().Suspend(true);
 			renderswitch = !renderswitch;
+			GetMTGS().Freeze(FREEZE_LOAD, sstate);
+			delete[] fP.data;
 			paused_core.AllowResume();
-			renderswitch_delay = -1;
+			reentrant = false;
 		}
 	}
 
@@ -450,52 +462,42 @@ namespace Implementations
 		ScopedCoreThreadPause paused_core;
 		paused_core.AllowResume();
 
-		g_Pcsx2Recording ^= 1;
+		if (wxGetApp().HasGUI())
+		{
+			sMainFrame.VideoCaptureToggle();
+			return;
+		}
 
 		GetMTGS().WaitGS(); // make sure GS is in sync with the audio stream when we start.
+		g_Pcsx2Recording = !g_Pcsx2Recording;
 		if (g_Pcsx2Recording)
 		{
 			// start recording
 
 			// make the recording setup dialog[s] pseudo-modal also for the main PCSX2 window
-			// (the GSdx dialog is already properly modal for the GS window)
-			bool needsMainFrameEnable = false;
+			// (the GS dialog is already properly modal for the GS window)
 			if (GetMainFramePtr() && GetMainFramePtr()->IsEnabled())
-			{
-				needsMainFrameEnable = true;
 				GetMainFramePtr()->Disable();
-			}
 
-			if (GSsetupRecording)
+			// GSsetupRecording can be aborted/canceled by the user. Don't go on to record the audio if that happens.
+			std::string filename;
+			if (GSsetupRecording(filename))
 			{
-				// GSsetupRecording can be aborted/canceled by the user. Don't go on to record the audio if that happens.
-				std::wstring* filename = nullptr;
-				if (filename = GSsetupRecording(g_Pcsx2Recording))
+				if (g_Conf->AudioCapture.EnableAudio && !SPU2setupRecording(&filename))
 				{
-					SPU2setupRecording(g_Pcsx2Recording, filename);
-					delete filename;
-				}
-				else
-				{
-					// recording dialog canceled by the user. align our state
-					g_Pcsx2Recording ^= 1;
+					GSendRecording();
+					g_Pcsx2Recording = false;
 				}
 			}
-			else
-			{
-				// the GS doesn't support recording
-				SPU2setupRecording(g_Pcsx2Recording, NULL);
-			}
-
-			if (GetMainFramePtr() && needsMainFrameEnable)
-				GetMainFramePtr()->Enable();
+			else // recording dialog canceled by the user. align our state
+				g_Pcsx2Recording = false;
 		}
 		else
 		{
 			// stop recording
-			if (GSsetupRecording)
-				GSsetupRecording(g_Pcsx2Recording);
-			SPU2setupRecording(g_Pcsx2Recording, NULL);
+			GSendRecording();
+			if (g_Conf->AudioCapture.EnableAudio)
+				SPU2endRecording();
 		}
 	}
 
@@ -534,6 +536,15 @@ namespace Implementations
 		if (g_Conf->EmuOptions.EnableRecordingTools)
 		{
 			g_InputRecordingControls.RecordModeToggle();
+		}
+	}
+
+	void GoToFirstFrame()
+	{
+		if (g_Conf->EmuOptions.EnableRecordingTools && g_InputRecording.IsActive())
+		{
+			// Assumes that gui is active, as you can't access recording options without it
+			g_InputRecording.GoToFirstFrame(GetMainFramePtr());
 		}
 	}
 
@@ -834,6 +845,8 @@ static const GlobalCommandDescriptor CommandDeclarations[] =
 		{"FrameAdvance", Implementations::FrameAdvance, NULL, NULL, false},
 		{"TogglePause", Implementations::TogglePause, NULL, NULL, false},
 		{"InputRecordingModeToggle", Implementations::InputRecordingModeToggle, NULL, NULL, false},
+		{"GoToFirstFrame", Implementations::GoToFirstFrame, NULL, NULL, false},
+
 		{"States_SaveSlot0", Implementations::States_SaveSlot0, NULL, NULL, false},
 		{"States_SaveSlot1", Implementations::States_SaveSlot1, NULL, NULL, false},
 		{"States_SaveSlot2", Implementations::States_SaveSlot2, NULL, NULL, false},
@@ -844,6 +857,7 @@ static const GlobalCommandDescriptor CommandDeclarations[] =
 		{"States_SaveSlot7", Implementations::States_SaveSlot7, NULL, NULL, false},
 		{"States_SaveSlot8", Implementations::States_SaveSlot8, NULL, NULL, false},
 		{"States_SaveSlot9", Implementations::States_SaveSlot9, NULL, NULL, false},
+
 		{"States_LoadSlot0", Implementations::States_LoadSlot0, NULL, NULL, false},
 		{"States_LoadSlot1", Implementations::States_LoadSlot1, NULL, NULL, false},
 		{"States_LoadSlot2", Implementations::States_LoadSlot2, NULL, NULL, false},
@@ -927,12 +941,12 @@ void AcceleratorDictionary::Map(const KeyAcceleratorCode& _acode, const char* se
 		if (!strcmp("Sys_TakeSnapshot", searchfor))
 		{
 			// Sys_TakeSnapshot is special in a bad way. On its own it creates a screenshot
-			// but GSdx also checks whether shift or ctrl are held down, and for each of
+			// but GS also checks whether shift or ctrl are held down, and for each of
 			// them it does a different thing (gs dumps). So we need to map a shortcut and
 			// also the same shortcut with shift and the same with ctrl to the same function.
 			// So make sure the shortcut doesn't include shift or ctrl, and then add two more
 			// which are derived from it.
-			// Also, looking at the GSdx code, it seems that it never cares about both shift
+			// Also, looking at the GS code, it seems that it never cares about both shift
 			// and ctrl held together, but PCSX2 traditionally mapped f8, shift-f8 and ctrl-shift-f8
 			// to Sys_TakeSnapshot, so let's not change it - we'll keep adding only shift and
 			// ctrl-shift to the base shortcut.
@@ -1025,8 +1039,8 @@ void Pcsx2App::InitDefaultGlobalAccelerators()
 
 	GlobalAccels->Map(AAC(WXK_ESCAPE), "Sys_SuspendResume");
 
-	// Fixme: GS Dumps could need a seperate label and hotkey binding or less interlinked with normal screenshots/snapshots , which messes with overloading lots of different mappings, commented the other GlobalAccels for this reason. GSdx hardcodes keybindings.
-	 GlobalAccels->Map(AAC(WXK_F8), "Sys_TakeSnapshot");
+	// Fixme: GS Dumps could need a seperate label and hotkey binding or less interlinked with normal screenshots/snapshots , which messes with overloading lots of different mappings, commented the other GlobalAccels for this reason. GS hardcodes keybindings.
+	GlobalAccels->Map(AAC(WXK_F8), "Sys_TakeSnapshot");
 	// GlobalAccels->Map(AAC(WXK_F8).Shift(), "Sys_TakeSnapshot");
 	// GlobalAccels->Map(AAC(WXK_F8).Shift().Cmd(), "Sys_TakeSnapshot");
 	GlobalAccels->Map(AAC(WXK_F9), "Sys_RenderswitchToggle");

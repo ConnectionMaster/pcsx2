@@ -14,8 +14,8 @@
  */
 
 #include "PrecompiledHeader.h"
-#include "../../USB.h"
-#include "../../Win32/Config_usb.h"
+#include "USB/USB.h"
+#include "USB/Win32/Config_usb.h"
 #include "usb-pad-raw.h"
 
 namespace usb_pad
@@ -175,7 +175,7 @@ namespace usb_pad
 			return len;
 		}
 
-		static void ParseRawInputHID(PRAWINPUT pRawInput)
+		static void ParseRawInputHID(PRAWINPUT pRawInput, int subtype)
 		{
 			PHIDP_PREPARSED_DATA pPreparsedData = NULL;
 			HIDP_CAPS Caps;
@@ -253,7 +253,7 @@ namespace usb_pad
 					uint16_t btn = mapping->btnMap[usage[i] - pButtonCaps->Range.UsageMin];
 					for (int j = 0; j < 2; j++)
 					{
-						PS2WheelTypes wt = (PS2WheelTypes)conf.WheelType[1 - j];
+						PS2WheelTypes wt = (PS2WheelTypes)subtype;
 						if (PLY_IS_MAPPED(j, btn))
 						{
 							uint32_t wtbtn = 1 << convert_wt_btn(wt, PLY_GET_VALUE(j, btn));
@@ -298,13 +298,10 @@ namespace usb_pad
 							break;
 					}
 
-					int type = 0;
 					for (int j = 0; j < 2; j++)
 					{
 						if (!PLY_IS_MAPPED(j, v))
 							continue;
-
-						type = conf.WheelType[1 - j];
 
 						switch (PLY_GET_VALUE(j, v))
 						{
@@ -312,7 +309,7 @@ namespace usb_pad
 								//Console.Warning("X: %d\n", value);
 								// Need for logical min too?
 								//generic_data.axis_x = ((value - pValueCaps[i].LogicalMin) * 0x3FF) / (pValueCaps[i].LogicalMax - pValueCaps[i].LogicalMin);
-								if (type == WT_DRIVING_FORCE_PRO || type == WT_DRIVING_FORCE_PRO_1102)
+								if (subtype == WT_DRIVING_FORCE_PRO || subtype == WT_DRIVING_FORCE_PRO_1102)
 									mapping->data[j].steering = (value * 0x3FFF) / pValueCaps[i].LogicalMax;
 								else
 									//XXX Limit value range to 0..1023 if using 'generic' wheel descriptor
@@ -355,7 +352,7 @@ namespace usb_pad
 			SAFE_FREE(pValueCaps);
 		}
 
-		static void ParseRawInputKB(PRAWINPUT pRawInput)
+		static void ParseRawInputKB(PRAWINPUT pRawInput, int subtype)
 		{
 			Mappings* mapping = nullptr;
 
@@ -378,7 +375,7 @@ namespace usb_pad
 				{
 					if (PLY_IS_MAPPED(j, btn))
 					{
-						PS2WheelTypes wt = (PS2WheelTypes)conf.WheelType[1 - j];
+						PS2WheelTypes wt = (PS2WheelTypes) subtype;
 						if (PLY_GET_VALUE(j, mapping->btnMap[i]) == pRawInput->data.keyboard.VKey)
 						{
 							uint32_t wtbtn = convert_wt_btn(wt, i);
@@ -411,9 +408,9 @@ namespace usb_pad
 		void RawInputPad::ParseRawInput(PRAWINPUT pRawInput)
 		{
 			if (pRawInput->header.dwType == RIM_TYPEKEYBOARD)
-				ParseRawInputKB(pRawInput);
+				ParseRawInputKB(pRawInput, Type());
 			else if (pRawInput->header.dwType == RIM_TYPEHID)
-				ParseRawInputHID(pRawInput);
+				ParseRawInputHID(pRawInput, Type());
 		}
 
 		int RawInputPad::Open()
@@ -446,7 +443,10 @@ namespace usb_pad
 				mOLWrite.hEvent = CreateEvent(0, 0, 0, 0);
 
 				HidD_GetAttributes(mUsbHandle, &(attr));
-				if (attr.VendorID != PAD_VID || attr.ProductID == 0xC262)
+
+				bool isClassicLogitech = (attr.VendorID == PAD_VID) && (attr.ProductID != 0xC262);
+				bool isKeyboardmania = (attr.VendorID == 0x0507) && (attr.ProductID == 0x0010);
+				if (!isClassicLogitech && !isKeyboardmania)
 				{
 					Console.Warning("USB: Vendor is not Logitech or wheel is G920. Not sending force feedback commands for safety reasons.\n");
 					mDoPassthrough = 0;

@@ -21,15 +21,15 @@
 #include <vector>
 #include <string>
 #include "AppCoreThread.h"
-#include "../gtk.h"
+#include "USB/gtk.h"
 
-#include "../configuration.h"
-#include "../deviceproxy.h"
-#include "../usb-pad/padproxy.h"
-#include "../usb-mic/audiodeviceproxy.h"
+#include "USB/configuration.h"
+#include "USB/deviceproxy.h"
+#include "USB/usb-pad/padproxy.h"
+#include "USB/usb-mic/audiodeviceproxy.h"
 
 #include "config.h"
-#include "../USB.h"
+#include "USB/USB.h"
 
 struct SettingsCB
 {
@@ -37,6 +37,7 @@ struct SettingsCB
 	std::string device;
 	std::string api;
 	GtkComboBox* combo;
+	GtkComboBox* subtype;
 };
 
 gboolean run_msg_dialog(gpointer data)
@@ -46,17 +47,6 @@ gboolean run_msg_dialog(gpointer data)
 	gtk_dialog_run(GTK_DIALOG(dialog));
 	gtk_widget_destroy(dialog);
 	return FALSE;
-}
-
-static void wheeltypeChanged(GtkComboBox* widget, gpointer data)
-{
-	gint idx = gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
-	//if(data)
-	{
-		uint8_t port = MIN(reinterpret_cast<uintptr_t>(data), 1);
-
-		conf.WheelType[port] = idx;
-	}
 }
 
 static void populateApiWidget(SettingsCB* settingsCB, const std::string& device)
@@ -95,6 +85,29 @@ static void populateApiWidget(SettingsCB* settingsCB, const std::string& device)
 	}
 }
 
+static void populateSubtypeWidget(SettingsCB* settingsCB, const std::string& device)
+{
+	gtk_list_store_clear(GTK_LIST_STORE(gtk_combo_box_get_model(settingsCB->subtype)));
+
+	auto dev = RegisterDevice::instance().Device(device);
+	int port = 1 - settingsCB->player;
+	GtkComboBox* widget = settingsCB->subtype;
+	if (dev)
+	{
+		int sel = 0;
+		if (!LoadSetting(nullptr, port, device, N_DEV_SUBTYPE, sel))
+		{
+			changedSubtype[std::make_pair(port, device)] = sel;
+		}
+
+		for (auto subtype : dev->SubTypes())
+		{
+			gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(widget), subtype.c_str());
+		}
+		gtk_combo_box_set_active(GTK_COMBO_BOX(widget), sel);
+	}
+}
+
 static void deviceChanged(GtkComboBox* widget, gpointer data)
 {
 	SettingsCB* settingsCB = (SettingsCB*)data;
@@ -107,6 +120,7 @@ static void deviceChanged(GtkComboBox* widget, gpointer data)
 
 	settingsCB->device = s;
 	populateApiWidget(settingsCB, s);
+	populateSubtypeWidget(settingsCB, s);
 
 	if (player == 0)
 		conf.Port[1] = s;
@@ -139,8 +153,22 @@ static void apiChanged(GtkComboBox* widget, gpointer data)
 			else
 				changedAPIs[pair] = *it;
 			settingsCB->api = *it;
-
 		}
+	}
+}
+
+static void subtypeChanged(GtkComboBox* widget, gpointer data)
+{
+	SettingsCB* settingsCB = (SettingsCB*)data;
+	int player = settingsCB->player;
+	gint active = gtk_combo_box_get_active(GTK_COMBO_BOX(widget));
+	int port = 1 - player;
+
+	auto& name = settingsCB->device;
+	auto dev = RegisterDevice::instance().Device(name);
+	if (dev)
+	{
+		changedSubtype[std::make_pair(port, name)] = active;
 	}
 }
 
@@ -161,7 +189,7 @@ static void configureApi(GtkWidget* widget, gpointer data)
 	}
 }
 
-GtkWidget* new_combobox(const char* label, GtkWidget* vbox)
+GtkWidget* new_combobox(const char* label, GtkWidget* vbox, bool scrollable)
 {
 	GtkWidget *rs_hbox, *rs_label, *rs_cb;
 
@@ -171,10 +199,16 @@ GtkWidget* new_combobox(const char* label, GtkWidget* vbox)
 	rs_label = gtk_label_new(label);
 	gtk_box_pack_start(GTK_BOX(rs_hbox), rs_label, FALSE, TRUE, 5);
 	gtk_label_set_justify(GTK_LABEL(rs_label), GTK_JUSTIFY_RIGHT);
-	gtk_misc_set_alignment(GTK_MISC(rs_label), 1, 0.5);
 
 	rs_cb = gtk_combo_box_text_new();
-	gtk_box_pack_start(GTK_BOX(rs_hbox), rs_cb, TRUE, TRUE, 5);
+	if (!scrollable)
+		gtk_box_pack_start(GTK_BOX(rs_hbox), rs_cb, TRUE, TRUE, 5);
+	else
+	{
+		GtkWidget* sw = gtk_scrolled_window_new(NULL, NULL);
+		gtk_container_add(GTK_CONTAINER(sw), rs_cb);
+		gtk_box_pack_start(GTK_BOX(rs_hbox), sw, TRUE, TRUE, 5);
+	}
 	return rs_cb;
 }
 
@@ -204,11 +238,9 @@ void USBconfigure()
 	settingsCB[0].player = 0;
 	settingsCB[1].player = 1;
 
-	const char* wt[] = {"Driving Force", "Driving Force Pro", "Driving Force Pro (rev11.02)", "GT Force"};
 	const char* players[] = {"Player 1:", "Player 2:"};
 
 	GtkWidget *rs_cb, *vbox;
-	uint32_t sel_idx = 0;
 
 	// Create the dialog window
 	GtkWidget* dlg = gtk_dialog_new_with_buttons(
@@ -275,24 +307,16 @@ void USBconfigure()
 		populateApiWidget(&settingsCB[ply], devs[ply]);
 	}
 
-	/** Wheel type **/
-	vbox = new_frame("Emulated wheel model:", main_vbox);
+	/** Emulated device / Wheel type **/
+	vbox = new_frame("Emulated device:", main_vbox);
 
 	for (int ply = 0; ply < 2; ply++)
 	{
-		int port = 1 - ply;
 		rs_cb = new_combobox(players[ply], vbox);
+		settingsCB[ply].subtype = GTK_COMBO_BOX(rs_cb);
+		g_signal_connect(G_OBJECT(rs_cb), "changed", G_CALLBACK(subtypeChanged), (gpointer)&settingsCB[ply]);
 
-		sel_idx = 0;
-
-		for (int i = 0; i < (int)countof(wt); i++)
-		{
-			gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(rs_cb), wt[i]);
-			if (conf.WheelType[port] == i)
-				sel_idx = i;
-		}
-		gtk_combo_box_set_active(GTK_COMBO_BOX(rs_cb), sel_idx);
-		g_signal_connect(G_OBJECT(rs_cb), "changed", G_CALLBACK(wheeltypeChanged), reinterpret_cast<gpointer>(port));
+		populateSubtypeWidget(&settingsCB[ply], devs[ply]);
 	}
 
 	gtk_widget_show_all(dlg);

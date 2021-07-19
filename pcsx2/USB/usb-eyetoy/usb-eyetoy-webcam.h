@@ -16,9 +16,9 @@
 #ifndef USBEYETOYWEBCAM_H
 #define USBEYETOYWEBCAM_H
 
-#include "../qemu-usb/vl.h"
-#include "../configuration.h"
-#include "../deviceproxy.h"
+#include "USB/qemu-usb/vl.h"
+#include "USB/configuration.h"
+#include "USB/deviceproxy.h"
 #include "videodeviceproxy.h"
 #include <mutex>
 
@@ -52,6 +52,10 @@ namespace usb_eyetoy
 		}
 		static int Configure(int port, const std::string& api, void* data);
 		static int Freeze(int mode, USBDevice* dev, void* data);
+		static std::vector<std::string> SubTypes()
+		{
+			return {};
+		}
 	};
 
 } // namespace usb_eyetoy

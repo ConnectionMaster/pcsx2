@@ -134,9 +134,9 @@ void V_Core::Init(int index)
 	NoiseOut = 0;
 	AutoDMACtrl = 0;
 	InputDataLeft = 0;
-	InputPosRead = 0;
-	InputPosWrite = 0;
+	InputPosWrite = 0x100;
 	InputDataProgress = 0;
+	InputDataTransferred = 0;
 	ReverbX = 0;
 	LastEffect.Left = 0;
 	LastEffect.Right = 0;
@@ -144,8 +144,6 @@ void V_Core::Init(int index)
 	AttrBit0 = 0;
 	DmaMode = 0;
 	DMAPtr = nullptr;
-	MADR = 0;
-	TADR = 0;
 	KeyOn = 0;
 	OutPos = 0;
 
@@ -222,6 +220,10 @@ void V_Core::Init(int index)
 	Regs.ENDX = 0xffffff; // PS2 confirmed
 
 	RevBuffers.NeedsUpdated = true;
+	RevbSampleBufPos = 0;
+	memset(RevbDownBuf, 0, sizeof(RevbDownBuf));
+	memset(RevbUpBuf, 0, sizeof(RevbUpBuf));
+
 	UpdateEffectsBufferSize();
 }
 
@@ -336,30 +338,11 @@ void V_Core::UpdateEffectsBufferSize()
 	RevBuffers.APF2_R_SRC = EffectsBufferIndexer(Revb.APF2_R_DST - Revb.APF2_SIZE);
 }
 
-bool V_Voice::Start()
+void V_Voice::Start()
 {
-	if (StartA & 7)
-	{
-		fprintf(stderr, " *** Misaligned StartA %05x!\n", StartA);
-		StartA = (StartA + 0xFFFF8) + 0x8;
-	}
-
-	ADSR.Releasing = false;
-	ADSR.Value = 1;
-	ADSR.Phase = 1;
-	SCurrent = 28;
-	LoopMode = 0;
-	SP = 0;
-	LoopFlags = 0;
-	NextA = StartA | 1;
-	Prev1 = 0;
-	Prev2 = 0;
-
-	PV1 = PV2 = 0;
-	PV3 = PV4 = 0;
-	NextCrest = -0x8000;
 	PlayCycle = Cycles;
-	return true;
+	LoopCycle = Cycles - 1; // Get it out of the start range as to not confuse it
+	PendingLoopStart = false;
 }
 
 void V_Voice::Stop()
@@ -371,6 +354,37 @@ void V_Voice::Stop()
 uint TickInterval = 768;
 static const int SanityInterval = 4800;
 extern void UpdateDebugDialog();
+
+__forceinline bool StartQueuedVoice(uint coreidx, uint voiceidx)
+{
+	V_Voice& vc(Cores[coreidx].Voices[voiceidx]);
+
+	if ((Cycles - vc.PlayCycle) < 2)
+		return false;
+
+	if (vc.StartA & 7)
+	{
+		fprintf(stderr, " *** Misaligned StartA %05x!\n", vc.StartA);
+		vc.StartA = (vc.StartA + 0xFFFF8) + 0x8;
+	}
+
+	vc.ADSR.Releasing = false;
+	vc.ADSR.Value = 1;
+	vc.ADSR.Phase = 1;
+	vc.SCurrent = 28;
+	vc.LoopMode = 0;
+	vc.SP = 0;
+	vc.LoopFlags = 0;
+	vc.NextA = vc.StartA | 1;
+	vc.Prev1 = 0;
+	vc.Prev2 = 0;
+
+	vc.PV1 = vc.PV2 = 0;
+	vc.PV3 = vc.PV4 = 0;
+	vc.NextCrest = -0x8000;
+
+	return true;
+}
 
 __forceinline void TimeUpdate(u32 cClocks)
 {
@@ -417,8 +431,7 @@ __forceinline void TimeUpdate(u32 cClocks)
 				if (!(Spdif.Info & (4 << i)) && Cores[i].IRQEnable)
 				{
 					Spdif.Info |= (4 << i);
-					if (!SPU2_dummy_callback)
-						spu2Irq();
+					spu2Irq();
 				}
 			}
 		}
@@ -427,6 +440,12 @@ __forceinline void TimeUpdate(u32 cClocks)
 		lClocks += TickInterval;
 		Cycles++;
 
+		// Start Queued Voices, they start after 2T (Tested on real HW)
+		for(int c = 0; c < 2; c++)
+			for (int v = 0; v < 24; v++)
+				if(Cores[c].KeyOn & (1 << v))
+					if(StartQueuedVoice(c, v))
+						Cores[c].KeyOn &= ~(1 << v);
 		// Note: IOP does not use MMX regs, so no need to save them.
 		//SaveMMXRegs();
 		Mix();
@@ -434,12 +453,14 @@ __forceinline void TimeUpdate(u32 cClocks)
 	}
 
 	//Update DMA4 interrupt delay counter
-	if (Cores[0].DMAICounter > 0 && (*cyclePtr - Cores[0].LastClock) > 0)
+	if (Cores[0].DMAICounter > 0 && (psxRegs.cycle - Cores[0].LastClock) > 0)
 	{
-		const u32 amt = std::min(*cyclePtr - Cores[0].LastClock, (u32)Cores[0].DMAICounter);
+		const u32 amt = std::min(psxRegs.cycle - Cores[0].LastClock, (u32)Cores[0].DMAICounter);
 		Cores[0].DMAICounter -= amt;
-		Cores[0].LastClock = *cyclePtr;
-		Cores[0].MADR += amt / 2;
+		Cores[0].LastClock = psxRegs.cycle;
+		if(!Cores[0].AdmaInProgress)
+			HW_DMA4_MADR += amt / 2;
+
 		if (Cores[0].DMAICounter <= 0)
 		{
 			if (((Cores[0].AutoDMACtrl & 1) != 1) && Cores[0].ReadSize)
@@ -459,23 +480,19 @@ __forceinline void TimeUpdate(u32 cClocks)
 					if (!(Spdif.Info & (4 << i)) && Cores[i].IRQEnable)
 					{
 						Spdif.Info |= (4 << i);
-						if (!SPU2_dummy_callback)
-							spu2Irq();
+						spu2Irq();
 					}
 				}
 			}
-			if (!Cores[0].DMAICounter)
+			if (Cores[0].DMAICounter <= 0)
 			{
-				Cores[0].MADR = Cores[0].TADR;
-				if (!SPU2_dummy_callback)
-					spu2DMA4Irq();
-				else
-					SPU2interruptDMA4();
+				HW_DMA4_MADR = HW_DMA4_TADR;
+				spu2DMA4Irq();
 			}
 		}
 		else
 		{
-			if (((psxCounters[6].sCycleT + psxCounters[6].CycleT) - psxRegs.cycle) > Cores[0].DMAICounter)
+			if (((psxCounters[6].sCycleT + psxCounters[6].CycleT) - psxRegs.cycle) > (u32)Cores[0].DMAICounter)
 			{
 				psxCounters[6].sCycleT = psxRegs.cycle;
 				psxCounters[6].CycleT = Cores[0].DMAICounter;
@@ -489,12 +506,13 @@ __forceinline void TimeUpdate(u32 cClocks)
 	}
 
 	//Update DMA7 interrupt delay counter
-	if (Cores[1].DMAICounter > 0 && (*cyclePtr - Cores[1].LastClock) > 0)
+	if (Cores[1].DMAICounter > 0 && (psxRegs.cycle - Cores[1].LastClock) > 0)
 	{
-		const u32 amt = std::min(*cyclePtr - Cores[1].LastClock, (u32)Cores[1].DMAICounter);
+		const u32 amt = std::min(psxRegs.cycle - Cores[1].LastClock, (u32)Cores[1].DMAICounter);
 		Cores[1].DMAICounter -= amt;
-		Cores[1].LastClock = *cyclePtr;
-		Cores[1].MADR += amt / 2;
+		Cores[1].LastClock = psxRegs.cycle;
+		if (!Cores[1].AdmaInProgress)
+			HW_DMA7_MADR += amt / 2;
 		if (Cores[1].DMAICounter <= 0)
 		{
 			if (((Cores[1].AutoDMACtrl & 2) != 2) && Cores[1].ReadSize)
@@ -514,24 +532,20 @@ __forceinline void TimeUpdate(u32 cClocks)
 					if (!(Spdif.Info & (4 << i)) && Cores[i].IRQEnable)
 					{
 						Spdif.Info |= (4 << i);
-						if (!SPU2_dummy_callback)
-							spu2Irq();
+						spu2Irq();
 					}
 				}
 			}
 
-			if (!Cores[1].DMAICounter)
+			if (Cores[1].DMAICounter <= 0)
 			{
-				Cores[1].MADR = Cores[1].TADR;
-				if (!SPU2_dummy_callback)
-					spu2DMA7Irq();
-				else
-					SPU2interruptDMA7();
+				HW_DMA7_MADR = HW_DMA7_TADR;
+				spu2DMA7Irq();
 			}
 		}
 		else
 		{
-			if (((psxCounters[6].sCycleT + psxCounters[6].CycleT) - psxRegs.cycle) > Cores[1].DMAICounter)
+			if (((psxCounters[6].sCycleT + psxCounters[6].CycleT) - psxRegs.cycle) > (u32)Cores[1].DMAICounter)
 			{
 				psxCounters[6].sCycleT = psxRegs.cycle;
 				psxCounters[6].CycleT = Cores[1].DMAICounter;
@@ -713,40 +727,40 @@ void V_Core::WriteRegPS1(u32 mem, u16 value)
 			case 0x1d90: //         Channel FM (pitch lfo) mode (0-15)
 				SPU2_FastWrite(REG_S_PMON, value);
 				if (value != 0)
-					ConLog("spu2x warning: wants to set Pitch Modulation reg1 to %x \n", value);
+					ConLog("SPU2 warning: wants to set Pitch Modulation reg1 to %x \n", value);
 				break;
 
 			case 0x1d92: //         Channel FM (pitch lfo) mode (16-23)
 				SPU2_FastWrite(REG_S_PMON + 2, value);
 				if (value != 0)
-					ConLog("spu2x warning: wants to set Pitch Modulation reg2 to %x \n", value);
+					ConLog("SPU2 warning: wants to set Pitch Modulation reg2 to %x \n", value);
 				break;
 
 
 			case 0x1d94: //         Channel Noise mode (0-15)
 				SPU2_FastWrite(REG_S_NON, value);
 				if (value != 0)
-					ConLog("spu2x warning: wants to set Channel Noise mode reg1 to %x\n", value);
+					ConLog("SPU2 warning: wants to set Channel Noise mode reg1 to %x\n", value);
 				break;
 
 			case 0x1d96: //         Channel Noise mode (16-23)
 				SPU2_FastWrite(REG_S_NON + 2, value);
 				if (value != 0)
-					ConLog("spu2x warning: wants to set Channel Noise mode reg2 to %x\n", value);
+					ConLog("SPU2 warning: wants to set Channel Noise mode reg2 to %x\n", value);
 				break;
 
 			case 0x1d98: //         1F801D98h - Voice 0..23 Reverb mode aka Echo On (EON) (R/W)
 				//Regs.VMIXEL = value & 0xFFFF;
 				SPU2_FastWrite(REG_S_VMIXEL, value);
 				SPU2_FastWrite(REG_S_VMIXER, value);
-				//ConLog("spu2x warning: setting reverb mode reg1 to %x \n", Regs.VMIXEL);
+				//ConLog("SPU2 warning: setting reverb mode reg1 to %x \n", Regs.VMIXEL);
 				break;
 
 			case 0x1d9a: //         1F801D98h + 2 - Voice 0..23 Reverb mode aka Echo On (EON) (R/W)
 				//Regs.VMIXEL = value << 16;
 				SPU2_FastWrite(REG_S_VMIXEL + 2, value);
 				SPU2_FastWrite(REG_S_VMIXER + 2, value);
-				//ConLog("spu2x warning: setting reverb mode reg2 to %x \n", Regs.VMIXEL);
+				//ConLog("SPU2 warning: setting reverb mode reg2 to %x \n", Regs.VMIXEL);
 				break;
 
 			// this was wrong? // edit: appears so!
@@ -761,12 +775,12 @@ void V_Core::WriteRegPS1(u32 mem, u16 value)
 			//break;
 			case 0x1d9c: // Voice 0..15 ON/OFF (status) (ENDX) (R) // writeable but hw overrides it shortly after
 				//Regs.ENDX &= 0xff0000;
-				ConLog("spu2x warning: wants to set ENDX reg1 to %x \n", value);
+				ConLog("SPU2 warning: wants to set ENDX reg1 to %x \n", value);
 				break;
 
 			case 0x1d9e: //         // Voice 15..23 ON/OFF (status) (ENDX) (R) // writeable but hw overrides it shortly after
 				//Regs.ENDX &= 0xffff;
-				ConLog("spu2x warning: wants to set ENDX reg2 to %x \n", value);
+				ConLog("SPU2 warning: wants to set ENDX reg2 to %x \n", value);
 				break;
 
 			case 0x1da2: //         Reverb work area start
@@ -794,8 +808,7 @@ void V_Core::WriteRegPS1(u32 mem, u16 value)
 				if (Cores[0].IRQEnable && (Cores[0].IRQA <= Cores[0].ActiveTSA))
 				{
 					SetIrqCall(0);
-					if (!SPU2_dummy_callback)
-						spu2Irq();
+					spu2Irq();
 				}
 				DmaWrite(value);
 				show = false;
@@ -1198,13 +1211,39 @@ static void __fastcall RegWrite_VoiceAddr(u16 value)
 			break;
 
 		case 2:
-			thisvoice.LoopStartA = ((u32)(value & 0x0F) << 16) | (thisvoice.LoopStartA & 0xFFF8);
-			thisvoice.LoopMode = 1;
+			{
+				u32* LoopReg;
+				if ((Cycles - thisvoice.PlayCycle) < 4)
+				{
+					LoopReg = &thisvoice.PendingLoopStartA;
+					thisvoice.PendingLoopStart = true;
+				}
+				else
+				{
+					LoopReg = &thisvoice.LoopStartA;
+					thisvoice.LoopMode = 1;
+				}
+
+				*LoopReg = ((u32)(value & 0x0F) << 16) | (*LoopReg & 0xFFF8);
+			}
 			break;
 
 		case 3:
-			thisvoice.LoopStartA = (thisvoice.LoopStartA & 0x0F0000) | (value & 0xFFF8);
-			thisvoice.LoopMode = 1;
+			{
+				u32* LoopReg;
+				if ((Cycles - thisvoice.PlayCycle) < 4)
+				{
+					LoopReg = &thisvoice.PendingLoopStartA;
+					thisvoice.PendingLoopStart = true;
+				}
+				else
+				{
+					LoopReg = &thisvoice.LoopStartA;
+					thisvoice.LoopMode = 1;
+				}
+				
+				*LoopReg = (*LoopReg & 0x0F0000) | (value & 0xFFF8);
+			}
 			break;
 
 			// Note that there's no proof that I know of that writing to NextA is
@@ -1522,11 +1561,13 @@ static void __fastcall RegWrite_Core(u16 value)
 				return;
 			}
 			thiscore.AutoDMACtrl = value;
-			if (value == 0 && thiscore.AdmaInProgress && (thiscore.Regs.STATX & 0x400))
+			if (!(value & 0x3) && thiscore.AdmaInProgress)
 			{
+				// Kill the current transfer so it doesn't continue
 				thiscore.AdmaInProgress = 0;
-				thiscore.Regs.STATX &= ~0x400; // Set DMA as not busy transferring
-				// No need to end the DMA here, the IOP seems to handle that
+				thiscore.InputDataLeft = 0;
+				thiscore.DMAICounter = 0;
+				thiscore.InputDataTransferred = 0;
 			}
 			break;
 
@@ -1922,12 +1963,12 @@ void SPU2_FastWrite(u32 rmem, u16 value)
 
 void StartVoices(int core, u32 value)
 {
-	ConLog("KeyOn Write %x\n", value);
-
 	// Optimization: Games like to write zero to the KeyOn reg a lot, so shortcut
 	// this loop if value is zero.
 	if (value == 0)
 		return;
+
+	ConLog("KeyOn Write %x\n", value);
 
 	Cores[core].KeyOn |= value;
 	Cores[core].Regs.ENDX &= ~value;
@@ -1937,8 +1978,7 @@ void StartVoices(int core, u32 value)
 		if (!((value >> vc) & 1))
 			continue;
 
-		if (Cores[core].Voices[vc].Start())
-			Cores[core].KeyOn &= ~(1 << vc);
+		Cores[core].Voices[vc].Start();
 
 		if (IsDevBuild)
 		{
@@ -1959,10 +1999,10 @@ void StartVoices(int core, u32 value)
 
 void StopVoices(int core, u32 value)
 {
-	ConLog("KeyOff Write %x\n", value);
-
 	if (value == 0)
 		return;
+
+	ConLog("KeyOff Write %x\n", value);
 
 	for (u8 vc = 0; vc < V_Core::NumVoices; vc++)
 	{
