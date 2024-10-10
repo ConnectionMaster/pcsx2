@@ -153,9 +153,13 @@ namespace R3000A
 	// the directory is considered non-existant
 	static __fi std::string clean_path(const std::string& path)
 	{
+#ifndef _WIN32
 		std::string ret = path;
 		std::replace(ret.begin(), ret.end(), '\\', '/');
 		return ret;
+#else // This function will cause problems with Windows WSL / device paths where forward slashes are required
+		return path;
+#endif
 	}
 
 	static int host_stat(const std::string& path, fio_stat_t* host_stats, fio_stat_flags& stat = ioman_stat)
@@ -398,6 +402,16 @@ namespace R3000A
 		}
 	};
 
+	struct fileHandle
+	{
+		u32 fd_index;
+		std::string full_path;
+		s32 flags;
+		u16 mode;
+	};
+
+	std::vector<fileHandle> handles;
+
 	namespace ioman
 	{
 		const int firstfd = 0x100;
@@ -511,6 +525,7 @@ namespace R3000A
 				if (fds[i])
 					fds[i].close();
 			}
+			handles.clear();
 		}
 
 		bool is_host(const std::string_view path)
@@ -598,6 +613,15 @@ namespace R3000A
 					v0 = allocfd(file);
 					if ((s32)v0 < 0)
 						file->close();
+					else
+					{
+						fileHandle handle;
+						handle.fd_index = v0 - firstfd;
+						handle.flags = flags;
+						handle.full_path = path;
+						handle.mode = mode;
+						handles.push_back(handle);
+					}
 				}
 
 				pc = ra;
@@ -614,6 +638,16 @@ namespace R3000A
 			if (getfd<IOManFile>(fd))
 			{
 				freefd(fd);
+
+				for (size_t i = 0; i < handles.size(); i++)
+				{
+					if (handles[i].fd_index == (u32) fd - firstfd)
+					{
+						handles.erase(handles.begin() + i);
+						break;
+					}
+				}
+
 				v0 = 0;
 				pc = ra;
 				return 1;
@@ -1128,18 +1162,24 @@ namespace R3000A
 			DevCon.WriteLn(Color_Gray, "ReleaseLibraryEntries: %8.8s version %x.%02x", modname.c_str(), version_major, version_minor);
 
 			R3000SymbolGuardian.ReadWrite([&](ccc::SymbolDatabase& database) {
-				// Destroy the symbols for the module.
+				// Enumerate the module symbols that exist for this IRX module.
+				// Really there should only be one.
+				std::vector<ccc::ModuleHandle> module_handles;
 				for (const auto& pair : database.modules.handles_from_name(modname))
 				{
-					const ccc::Module* existing_module = database.modules.symbol_from_handle(pair.second);
-					if (!existing_module || !existing_module->is_irx)
+					const ccc::Module* module_symbol = database.modules.symbol_from_handle(pair.second);
+					if (!module_symbol || !module_symbol->is_irx)
 						continue;
 
-					if (existing_module->version_major != version_major || existing_module->version_minor != version_minor)
+					if (module_symbol->version_major != version_major || module_symbol->version_minor != version_minor)
 						continue;
 
-					database.destroy_symbols_from_module(existing_module->handle(), true);
+					module_handles.emplace_back(module_symbol->handle());
 				}
+
+				// Destroy the symbols for the module.
+				for (ccc::ModuleHandle module_handle : module_handles)
+					database.destroy_symbols_from_module(module_handle, true);
 			});
 		}
 
@@ -1377,3 +1417,62 @@ namespace R3000A
 	}
 
 } // end namespace R3000A
+
+bool SaveStateBase::handleFreeze()
+{
+	if (!EmuConfig.HostFs) //if hostfs isn't enabled, skip loading/saving file handles
+		return IsOkay();
+
+	if (IsLoading())
+		R3000A::ioman::reset();
+
+	if (!FreezeTag("hostHandles"))
+		return false;
+
+	const int firstfd = R3000A::ioman::firstfd;
+	size_t handleCount = R3000A::handles.size();
+	Freeze(handleCount);
+
+	for (size_t i = 0; i < handleCount; i++)
+	{
+		if (IsLoading())
+		{
+			//load the parameters for opening the file
+			s32 pos;
+			Freeze(pos);
+
+			R3000A::fileHandle handle;
+			Freeze(handle.flags);
+			FreezeString(handle.full_path);
+			Freeze(handle.mode);
+			R3000A::handles.push_back(handle);
+
+			//reopen the file
+			IOManFile* file = NULL;
+			R3000A::HostFile::open(&file, handle.full_path, handle.flags, handle.mode);
+			if (!file)
+			{
+				Console.Warning("Failed to open file: '%s'", handle.full_path.c_str());
+				continue;
+			}
+			R3000A::handles[i].fd_index = R3000A::ioman::allocfd(file) - firstfd;
+
+			//seek file to position when saved
+			file->lseek(pos, SEEK_SET);
+		}
+		else
+		{
+			//save the current file position
+			const u32 fd = R3000A::handles[i].fd_index;
+			IOManFile* file = R3000A::ioman::getfd<IOManFile>(fd + firstfd);
+			s32 pos = file ? file->lseek(0, SEEK_CUR) : 0;
+			Freeze(pos);
+
+			//save the parameters for opening the file
+			Freeze(R3000A::handles[i].flags);
+			FreezeString(R3000A::handles[i].full_path);
+			Freeze(R3000A::handles[i].mode);
+		}
+	}
+	return IsOkay();
+}

@@ -877,6 +877,9 @@ void VMManager::RequestDisplaySize(float scale /*= 0.0f*/)
 		case AspectRatioType::R16_9:
 			x_scale = (16.0f / 9.0f) / (static_cast<float>(iwidth) / static_cast<float>(iheight));
 			break;
+		case AspectRatioType::R10_7:
+			x_scale = (10.0f / 7.0f) / (static_cast<float>(iwidth) / static_cast<float>(iheight));
+			break;
 		case AspectRatioType::Stretch:
 		default:
 			x_scale = 1.0f;
@@ -938,10 +941,7 @@ bool VMManager::UpdateGameSettingsLayer()
 
 	std::string input_profile_name;
 	if (new_interface)
-	{
-		if (!new_interface->GetBoolValue("Pad", "UseGameSettingsForController", false))
-			new_interface->GetStringValue("EmuCore", "InputProfileName", &input_profile_name);
-	}
+		new_interface->GetStringValue("EmuCore", "InputProfileName", &input_profile_name);
 
 	if (!s_game_settings_interface && !new_interface && s_input_profile_name == input_profile_name)
 		return false;
@@ -1708,6 +1708,8 @@ void VMManager::Reset()
 	ClearELFInfo();
 	if (elf_was_changed)
 		HandleELFChange(false);
+
+	Achievements::ResetClient();
 
 	mmap_ResetBlockTracking();
 	memSetExtraMemMode(EmuConfig.Cpu.ExtraMemory);
@@ -2514,21 +2516,28 @@ void VMManager::LogCPUCapabilities()
 	Console.WriteLnFmt("  Processor        = {}", cpuinfo_get_package(0)->name);
 	Console.WriteLnFmt("  Core Count       = {} cores", cpuinfo_get_cores_count());
 	Console.WriteLnFmt("  Thread Count     = {} threads", cpuinfo_get_processors_count());
+	Console.WriteLnFmt("  Cluster Count    = {} clusters", cpuinfo_get_clusters_count());
 #ifdef _WIN32
 	LogUserPowerPlan();
 #endif
 
 #ifdef _M_X86
-	std::string features;
+	std::string extensions;
 	if (cpuinfo_has_x86_avx())
-		features += "AVX ";
+		extensions += "AVX ";
 	if (cpuinfo_has_x86_avx2())
-		features += "AVX2 ";
+		extensions += "AVX2 ";
+	if (cpuinfo_has_x86_avx512f())
+		extensions += "AVX512F ";
+#ifdef _M_ARM64
+	if (cpuinfo_has_arm_neon())
+		extensions += "NEON ";
+#endif
 
-	StringUtil::StripWhitespace(&features);
+	StringUtil::StripWhitespace(&extensions);
 
-	Console.WriteLn(Color_StrongBlack, "x86 Features Detected:");
-	Console.WriteLnFmt("  {}", features);
+	Console.WriteLn(Color_StrongBlack, "CPU Extensions Detected:");
+	Console.WriteLnFmt("  {}", extensions);
 	Console.WriteLn();
 #endif
 
@@ -3627,15 +3636,17 @@ void VMManager::UpdateDiscordPresence(bool update_session_time)
 
 	std::string state_string;
 
+	auto lock = Achievements::GetLock();
+
 	if (Achievements::HasRichPresence())
 	{
-		auto lock = Achievements::GetLock();
+		rp.state = (state_string = StringUtil::Ellipsise(Achievements::GetRichPresenceString(), 128)).c_str();
 
-		state_string = StringUtil::Ellipsise(Achievements::GetRichPresenceString(), 128);
-		rp.state = state_string.c_str();
-
-		rp.largeImageKey = Achievements::GetGameIconURL().c_str();
-		rp.largeImageText = s_title.c_str();
+		if (const std::string& icon_url = Achievements::GetGameIconURL(); !icon_url.empty())
+		{
+			rp.largeImageKey = icon_url.c_str();
+			rp.largeImageText = s_title.c_str();
+		}
 	}
 
 	Discord_UpdatePresence(&rp);

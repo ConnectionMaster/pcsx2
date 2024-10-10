@@ -9515,7 +9515,8 @@ SCPS-51012:
   name: "Gigantic Drive"
   region: "NTSC-J"
   gsHWFixes:
-    autoFlush: 2 # Fixes DOF effect.
+    autoFlush: 2 # Fixes Depth of Field effect.
+    halfPixelOffset: 4 # Aligns Depth of Field.
 SCPS-51013:
   name: "Torneko's Adventure 3"
   region: "NTSC-J"
@@ -9609,6 +9610,7 @@ SCPS-55014:
   gsHWFixes:
     halfPixelOffset: 4 # Corrects positioning of reflections on suit's surfaces.
     roundSprite: 2 # Reduces garbage on the UI whilst upscaling.
+    mergeSprite: 1 # Fixes incorrect blur when Round Sprite is enabled.
 SCPS-55015:
   name: "Zettai Zetsumei Toshi"
   region: "NTSC-J"
@@ -14049,6 +14051,9 @@ SLES-50310:
   name: "Freak Out"
   region: "PAL-E"
   compat: 5
+  gsHWFixes:
+    halfPixelOffset: 4 # Aligns post effects.
+    autoFlush: 1 # Fixes ghosting.
 SLES-50314:
   name: "Giants - Citizen Kabuto"
   region: "PAL-E"
@@ -14839,8 +14844,8 @@ SLES-50723:
   name: "TOCA Race Driver"
   region: "PAL-M3"
   gsHWFixes:
-    alignSprite: 1 # Fixes vertical lines, also works with normal vertex.
     mergeSprite: 1 # Fixes lighting.
+    halfPixelOffset: 1 # Fixes vertical lines
 SLES-50725:
   name: "V-Rally 3"
   region: "PAL-M5"
@@ -14937,8 +14942,8 @@ SLES-50767:
   name: "V8 Supercars Australia - Race Driver"
   region: "PAL-A"
   gsHWFixes:
-    alignSprite: 1 # Fixes vertical lines, also works with normal vertex.
     mergeSprite: 1 # Fixes lighting.
+    halfPixelOffset: 1 # Fixes vertical lines
 SLES-50768:
   name: "Rally Championship"
   region: "PAL-Unk"
@@ -15104,14 +15109,14 @@ SLES-50816:
   region: "PAL-M3"
   compat: 5
   gsHWFixes:
-    alignSprite: 1 # Fixes vertical lines, also works with normal vertex.
     mergeSprite: 1 # Fixes lighting.
+    halfPixelOffset: 1 # Fixes vertical lines
 SLES-50818:
   name: "Pro Race Driver"
   region: "PAL-I"
   gsHWFixes:
-    alignSprite: 1 # Fixes vertical lines, also works with normal vertex.
     mergeSprite: 1 # Fixes lighting.
+    halfPixelOffset: 1 # Fixes vertical lines
 SLES-50820:
   name: "Micro Machines"
   region: "PAL-M5"
@@ -16648,6 +16653,7 @@ SLES-51399:
   gsHWFixes:
     halfPixelOffset: 4 # Corrects positioning of reflections on suit's surfaces.
     roundSprite: 2 # Reduces garbage on the UI whilst upscaling.
+    mergeSprite: 1 # Fixes incorrect blur when Round Sprite is enabled.
 SLES-51400:
   name: "Tenchu - Wrath of Heaven"
   region: "PAL-S"
@@ -17602,7 +17608,8 @@ SLES-51856:
   name: "Monster Attack"
   region: "PAL-E"
   gsHWFixes:
-    halfPixelOffset: 4 # Fixes depth of field positioning.
+    autoFlush: 2 # Fixes Depth of Field effect.
+    halfPixelOffset: 4 # Aligns Depth of Field.
 SLES-51859:
   name: "Billiards Xciting"
   region: "PAL-E"
@@ -19332,7 +19339,7 @@ SLES-52569:
   region: "PAL-M6"
   compat: 5
   gsHWFixes:
-    halfPixelOffset: 2 # Fixes misaligned bloom effects that streak on-screen, causes occasional trash shadows at places.
+    nativeScaling: 2 # Fixes post processing smoothness and position.
 SLES-52570:
   name: "Area 51"
   region: "PAL-M5"
@@ -24851,6 +24858,9 @@ SLES-54396:
   name: "Cricket 07"
   region: "PAL-E"
   compat: 5
+  gsHWFixes:
+    cpuSpriteRenderBW: 4 # Fixes broken sprite rendering and mipmapping.
+    cpuSpriteRenderLevel: 2 # Needed for above.
 SLES-54400:
   name: "Nickelodeon SpongeBob SquarePants - Creature from the Krusty Krab"
   region: "PAL-M7"
@@ -25052,8 +25062,9 @@ SLES-54464:
   region: "PAL-E"
   compat: 5
   gsHWFixes:
-    halfPixelOffset: 4 # Fixes post processing positioning.
-    nativeScaling: 1 # Fixes post processing effects caused by upscaling.
+    autoFlush: 2 # Fixes Depth of Field effect.
+    halfPixelOffset: 4 # Aligns Depth of Field.
+    nativeScaling: 1 # Fixes Depth of Field effect.
 SLES-54465:
   name: "CSI - 3 Dimensions of Murder"
   region: "PAL-M5"
@@ -28936,8 +28947,9 @@ SLKA-15058:
   name-sort: "Terra Defence Force, The 2"
   region: "NTSC-K"
   gsHWFixes:
-    halfPixelOffset: 4 # Fixes post processing positioning.
-    nativeScaling: 1 # Fixes post processing effects caused by upscaling.
+    autoFlush: 2 # Fixes Depth of Field effect.
+    halfPixelOffset: 4 # Aligns Depth of Field.
+    nativeScaling: 1 # Fixes Depth of Field effect.
 SLKA-15060:
   name: "Raiden III"
   region: "NTSC-K"
@@ -31315,6 +31327,8 @@ SLPM-55087:
 SLPM-55088:
   name: "Never7 The Age of Infinity [Renai Game Selection]"
   region: "NTSC-J"
+  gameFixes:
+    - SkipMPEGHack # Prevents the game from freezing.
 SLPM-55089:
   name: "Naxat Soft Reach Mania Vol. 1 - CR Galaxy Angel"
   region: "NTSC-J"
@@ -32225,6 +32239,9 @@ SLPM-60157:
 SLPM-60158:
   name: "Hippa Linda"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 4 # Aligns post effects.
+    autoFlush: 1 # Fixes ghosting.
 SLPM-60159:
   name: "Dengeki PS2 PlayStation D47"
   region: "NTSC-J"
@@ -33683,6 +33700,9 @@ SLPM-62109:
   name-sort: "ひっぱりんだ"
   name-en: "Hippa Linda"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 4 # Aligns post effects.
+    autoFlush: 1 # Fixes ghosting.
 SLPM-62111:
   name: "EGBrowser"
   region: "NTSC-J"
@@ -34095,7 +34115,8 @@ SLPM-62209:
   name-en: "Gigantic Drive"
   region: "NTSC-J"
   gsHWFixes:
-    autoFlush: 2 # Fixes DOF effect.
+    autoFlush: 2 # Fixes Depth of Field effect.
+    halfPixelOffset: 4 # Aligns Depth of Field.
 SLPM-62211:
   name: "18WHEELER"
   name-sort: "18WHEELER"
@@ -34714,7 +34735,8 @@ SLPM-62344:
   name-en: "Simple 2000 Series Vol. 31 - The Chikyuu Boueigun"
   region: "NTSC-J"
   gsHWFixes:
-    halfPixelOffset: 4 # Fixes depth of field positioning.
+    autoFlush: 2 # Fixes Depth of Field effect.
+    halfPixelOffset: 4 # Aligns Depth of Field.
 SLPM-62345:
   name: "SIMPLE2000シリーズVol.32 THE戦車"
   name-sort: "しんぷる2000しりーずVol.32 THEせんしゃ"
@@ -36255,8 +36277,9 @@ SLPM-62652:
   region: "NTSC-J"
   compat: 5
   gsHWFixes:
-    halfPixelOffset: 4 # Fixes depth of field positioning.
-    nativeScaling: 1 # Fixes post processing effects due to upscaling.
+    autoFlush: 2 # Fixes Depth of Field effect.
+    halfPixelOffset: 4 # Aligns Depth of Field.
+    nativeScaling: 1 # Fixes Depth of Field effect.
 SLPM-62653:
   name: "Psikyo Shooting Collection Vol.1 - Strikers 1945 1-2 [Taito The Best]"
   region: "NTSC-J"
@@ -40739,6 +40762,8 @@ SLPM-65689:
   name-sort: "すーぱーらいと2000 れんあいあどべんちゃー Never7〜the end of infinity〜"
   name-en: "Never 7 - The End of Infinity [SuperLite 2000 Series]"
   region: "NTSC-J"
+  gameFixes:
+    - SkipMPEGHack # Prevents the game from freezing.
 SLPM-65690:
   name: "此花4〜闇を祓う祈り〜"
   name-sort: "このはな4〜やみをはらういのり〜"
@@ -48728,6 +48753,7 @@ SLPM-67524:
   gsHWFixes:
     halfPixelOffset: 4 # Corrects positioning of reflections on suit's surfaces.
     roundSprite: 2 # Reduces garbage on the UI whilst upscaling.
+    mergeSprite: 1 # Fixes incorrect blur when Round Sprite is enabled.
 SLPM-67525:
   name: "Medal of Honor - Frontline"
   region: "NTSC-K"
@@ -52531,6 +52557,7 @@ SLPS-25112:
   gsHWFixes:
     halfPixelOffset: 4 # Corrects positioning of reflections on suit's surfaces.
     roundSprite: 2 # Reduces garbage on the UI whilst upscaling.
+    mergeSprite: 1 # Fixes incorrect blur when Round Sprite is enabled.
 SLPS-25113:
   name: "絶体絶命都市"
   name-sort: "ぜったいぜつめいとし"
@@ -53315,6 +53342,8 @@ SLPS-25256:
   name-sort: "Never7 the end of infinity"
   name-en: "Never 7 - The End of Infinity"
   region: "NTSC-J"
+  gameFixes:
+    - SkipMPEGHack # Prevents the game from freezing.
 SLPS-25257:
   name: "想いのかけら 〜Close to 〜"
   name-sort: "おもいのかけら Close to"
@@ -53899,8 +53928,11 @@ SLPS-25361:
 SLPS-25362:
   name: "鉄人28号"
   name-sort: "てつじん28ごう"
-  name-en: "Tetsujin 28 Go"
+  name-en: "Tetsujin 28-gō"
   region: "NTSC-J"
+  gsHWFixes:
+    autoFlush: 2 # Fixes Depth of Field effect.
+    halfPixelOffset: 4 # Aligns Depth of Field.
 SLPS-25363:
   name: "桜坂消防隊"
   name-sort: "さくらざかしょうぼうたい"
@@ -56108,12 +56140,17 @@ SLPS-25731:
   clampModes:
     eeClampMode: 2 # Fixes Abnormal AI behavior.
   gsHWFixes:
+    recommendedBlendingLevel: 3 # Improves sky rendering.
     textureInsideRT: 1 # Fixes texture corruption.
 SLPS-25732:
   name: "ARMORED CORE 3 (ARMORED CORE PREMIUM BOX同梱用)"
   name-sort: "あーまーどこあ3"
   name-en: "Armored Core 3"
   region: "NTSC-J"
+  gsHWFixes:
+    halfPixelOffset: 4 # Corrects positioning of reflections on suit's surfaces.
+    roundSprite: 2 # Reduces garbage on the UI whilst upscaling.
+    mergeSprite: 1 # Fixes incorrect blur when Round Sprite is enabled.
 SLPS-25733:
   name: "スーパーロボット大戦OG ORIGINAL GENERATIONS"
   name-sort: "すーぱーろぼっとたいせんOG ORIGINAL GENERATIONS"
@@ -59035,6 +59072,9 @@ SLUS-20182:
   name: "Stretch Panic"
   region: "NTSC-U"
   compat: 5
+  gsHWFixes:
+    halfPixelOffset: 4 # Aligns post effects.
+    autoFlush: 1 # Fixes ghosting.
 SLUS-20183:
   name: "Tiny Toon Adventures - Defenders Of The Universe"
   region: "NTSC-U"
@@ -59727,8 +59767,8 @@ SLUS-20329:
   region: "NTSC-U"
   compat: 5
   gsHWFixes:
-    alignSprite: 1 # Fixes vertical lines, also works with normal vertex.
     mergeSprite: 1 # Fixes lighting.
+    halfPixelOffset: 1 # Fixes vertical lines
 SLUS-20330:
   name: "NBA 2K2 - Sega Sports"
   region: "NTSC-U"
@@ -60280,6 +60320,7 @@ SLUS-20435:
   gsHWFixes:
     halfPixelOffset: 4 # Corrects positioning of reflections on suit's surfaces.
     roundSprite: 2 # Reduces garbage on the UI whilst upscaling.
+    mergeSprite: 1 # Fixes incorrect blur when Round Sprite is enabled.
 SLUS-20436:
   name: "Guilty Gear X2"
   region: "NTSC-U"
@@ -60324,11 +60365,12 @@ SLUS-20444:
   name: "Tankers"
   region: "NTSC-U"
 SLUS-20445:
-  name: "Robot Alchemic Drive - RAD"
+  name: "Robot Alchemic Drive - R.A.D."
   region: "NTSC-U"
   compat: 5
   gsHWFixes:
-    autoFlush: 2 # Fixes DOF effect.
+    autoFlush: 2 # Fixes Depth of Field effect.
+    halfPixelOffset: 4 # Aligns Depth of Field.
 SLUS-20446:
   name: "Agassi Tennis Generation"
   region: "NTSC-U"
@@ -62634,7 +62676,7 @@ SLUS-20884:
   region: "NTSC-U"
   compat: 5
   gsHWFixes:
-    halfPixelOffset: 2 # Fixes misaligned bloom effects that streak on-screen, causes occasional trash shadows at places.
+    nativeScaling: 2 # Fixes post processing smoothness and position.
 SLUS-20885:
   name: "The Red Star"
   name-sort: "Red Star, The"
@@ -69049,10 +69091,11 @@ SLUS-29022:
   name: "UFC - Throwdown [Regular Demo]"
   region: "NTSC-U"
 SLUS-29025:
-  name: "R.A.D. - Robot Alchemic Drive [Demo]"
+  name: "Robot Alchemic Drive - R.A.D. [Demo]"
   region: "NTSC-U"
   gsHWFixes:
-    autoFlush: 2 # Fixes DOF effect.
+    autoFlush: 2 # Fixes Depth of Field effect.
+    halfPixelOffset: 4 # Aligns Depth of Field.
 SLUS-29026:
   name: "MX SuperFly [Demo]"
   region: "NTSC-U"

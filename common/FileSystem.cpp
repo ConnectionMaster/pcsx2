@@ -1650,6 +1650,21 @@ bool FileSystem::DirectoryExists(const char* path)
 		return false;
 }
 
+bool FileSystem::IsRealDirectory(const char* path)
+{
+	// convert to wide string
+	const std::wstring wpath = GetWin32Path(path);
+	if (wpath.empty())
+		return false;
+
+	// determine attributes for the path. if it's a directory, things have to be handled differently..
+	const DWORD fileAttributes = GetFileAttributesW(wpath.c_str());
+	if (fileAttributes == INVALID_FILE_ATTRIBUTES)
+		return false;
+
+	return ((fileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != FILE_ATTRIBUTE_DIRECTORY);
+}
+
 bool FileSystem::DirectoryIsEmpty(const char* path)
 {
 	std::wstring wpath = GetWin32Path(path);
@@ -1717,8 +1732,26 @@ bool FileSystem::CreateDirectoryPath(const char* Path, bool Recursive, Error* er
 		std::wstring tempPath;
 		tempPath.reserve(pathLength);
 
+		// for absolute paths, we need to skip over the path root
+		size_t rootLength = 0;
+		if (Path::IsAbsolute(Path))
+		{
+			const wchar_t* root_start = wpath.c_str();
+			wchar_t* root_end;
+			const HRESULT hr = PathCchSkipRoot(const_cast<wchar_t*>(root_start), &root_end);
+			if (FAILED(hr))
+			{
+				Error::SetHResult(error, "PathCchSkipRoot() failed: ", hr);
+				return false;
+			}
+			rootLength = static_cast<size_t>(root_end - root_start);
+
+			// copy path root
+			tempPath.append(wpath, 0, rootLength);
+		}
+
 		// create directories along the path
-		for (size_t i = 0; i < pathLength; i++)
+		for (size_t i = rootLength; i < pathLength; i++)
 		{
 			if (wpath[i] == L'\\' || wpath[i] == L'/')
 			{
@@ -1962,7 +1995,7 @@ static u32 RecursiveFindFiles(const char* OriginPath, const char* ParentPath, co
 		outData.Attributes = 0;
 
 		struct stat sDir;
-		if (lstat(full_path.c_str(), &sDir) < 0)
+		if (stat(full_path.c_str(), &sDir) < 0)
 			continue;
 
 		if (S_ISDIR(sDir.st_mode))
@@ -2101,7 +2134,7 @@ bool FileSystem::StatFile(const char* path, FILESYSTEM_STAT_DATA* sd)
 
 	// stat file
 	struct stat sysStatData;
-	if (lstat(path, &sysStatData) < 0)
+	if (stat(path, &sysStatData) < 0)
 		return false;
 
 	// parse attributes
@@ -2157,7 +2190,7 @@ bool FileSystem::FileExists(const char* path)
 
 	// stat file
 	struct stat sysStatData;
-	if (lstat(path, &sysStatData) < 0)
+	if (stat(path, &sysStatData) < 0)
 		return false;
 
 	if (S_ISDIR(sysStatData.st_mode))
@@ -2174,13 +2207,22 @@ bool FileSystem::DirectoryExists(const char* path)
 
 	// stat file
 	struct stat sysStatData;
-	if (lstat(path, &sysStatData) < 0)
+	if (stat(path, &sysStatData) < 0)
 		return false;
 
 	if (S_ISDIR(sysStatData.st_mode))
 		return true;
 	else
 		return false;
+}
+
+bool FileSystem::IsRealDirectory(const char* path)
+{
+	struct stat sysStatData;
+	if (lstat(path, &sysStatData) < 0)
+		return false;
+
+	return (S_ISDIR(sysStatData.st_mode) && !S_ISLNK(sysStatData.st_mode));
 }
 
 bool FileSystem::DirectoryIsEmpty(const char* path)
@@ -2224,7 +2266,7 @@ bool FileSystem::CreateDirectoryPath(const char* path, bool recursive, Error* er
 	{
 		// check the attributes
 		struct stat sysStatData;
-		if (lstat(path, &sysStatData) == 0 && S_ISDIR(sysStatData.st_mode))
+		if (stat(path, &sysStatData) == 0 && S_ISDIR(sysStatData.st_mode))
 			return true;
 	}
 
@@ -2294,7 +2336,7 @@ bool FileSystem::DeleteFilePath(const char* path, Error* error)
 	}
 
 	struct stat sysStatData;
-	if (lstat(path, &sysStatData) != 0 || S_ISDIR(sysStatData.st_mode))
+	if (stat(path, &sysStatData) != 0 || S_ISDIR(sysStatData.st_mode))
 	{
 		Error::SetStringView(error, "File does not exist.");
 		return false;
@@ -2334,7 +2376,7 @@ bool FileSystem::DeleteDirectory(const char* path)
 		return false;
 
 	struct stat sysStatData;
-	if (lstat(path, &sysStatData) != 0 || !S_ISDIR(sysStatData.st_mode))
+	if (stat(path, &sysStatData) != 0 || !S_ISDIR(sysStatData.st_mode))
 		return false;
 
 	return (rmdir(path) == 0);

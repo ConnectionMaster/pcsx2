@@ -228,16 +228,20 @@ void MainWindow::setupAdditionalUi()
 
 	m_status_resolution_widget = new QLabel(m_ui.statusBar);
 	m_status_resolution_widget->setFixedHeight(16);
-	m_status_resolution_widget->setFixedSize(70, 16);
+	m_status_resolution_widget->setFixedSize(75, 16);
 	m_status_resolution_widget->hide();
 
 	m_status_fps_widget = new QLabel(m_ui.statusBar);
-	m_status_fps_widget->setFixedSize(85, 16);
+	m_status_fps_widget->setFixedSize(60, 16);
 	m_status_fps_widget->hide();
 
 	m_status_vps_widget = new QLabel(m_ui.statusBar);
-	m_status_vps_widget->setFixedSize(125, 16);
+	m_status_vps_widget->setFixedSize(60, 16);
 	m_status_vps_widget->hide();
+
+	m_status_speed_widget = new QLabel(m_ui.statusBar);
+	m_status_speed_widget->setFixedSize(90, 16);
+	m_status_speed_widget->hide();
 
 	m_settings_toolbar_menu = new QMenu(m_ui.toolBar);
 	m_settings_toolbar_menu->addAction(m_ui.actionSettings);
@@ -872,6 +876,7 @@ void MainWindow::updateEmulationActions(bool starting, bool running, bool stoppi
 	m_ui.actionPause->setEnabled(running);
 	m_ui.actionScreenshot->setEnabled(running);
 	m_ui.menuChangeDisc->setEnabled(running);
+	m_ui.menuLoadState->setEnabled(running);
 	m_ui.menuSaveState->setEnabled(running);
 	m_ui.actionSaveGSDump->setEnabled(running);
 
@@ -880,6 +885,7 @@ void MainWindow::updateEmulationActions(bool starting, bool running, bool stoppi
 	m_ui.actionToolbarPause->setEnabled(running);
 	m_ui.actionToolbarScreenshot->setEnabled(running);
 	m_ui.actionToolbarChangeDisc->setEnabled(running);
+	m_ui.actionToolbarLoadState->setEnabled(running);
 	m_ui.actionToolbarSaveState->setEnabled(running);
 
 	m_ui.actionViewGameProperties->setEnabled(running);
@@ -951,6 +957,7 @@ void MainWindow::updateStatusBarWidgetVisibility()
 	Update(m_status_resolution_widget, s_vm_valid, 0);
 	Update(m_status_fps_widget, s_vm_valid, 0);
 	Update(m_status_vps_widget, s_vm_valid, 0);
+	Update(m_status_speed_widget, s_vm_valid, 0);
 }
 
 void MainWindow::updateWindowTitle()
@@ -1716,8 +1723,36 @@ void MainWindow::onCreateMemoryCardOpenRequested()
 
 void MainWindow::updateTheme()
 {
+	// The debugger hates theme changes.
+	// We have unfortunately to destroy it and recreate it.
+	const bool debugger_is_open = m_debugger_window ? m_debugger_window->isVisible() : false;
+	const QSize debugger_size = m_debugger_window ? m_debugger_window->size() : QSize();
+	const QPoint debugger_pos = m_debugger_window ? m_debugger_window->pos() : QPoint();
+	if (m_debugger_window)
+	{
+		if (QMessageBox::question(this, tr("Theme Change"),
+				tr("Changing the theme will close the debugger window. Any unsaved data will be lost. Do you want to continue?"),
+				QMessageBox::Yes | QMessageBox::No) == QMessageBox::No)
+		{
+			return;
+		}
+	}
+
 	QtHost::UpdateApplicationTheme();
 	reloadThemeSpecificImages();
+
+	if (m_debugger_window)
+	{
+		m_debugger_window->deleteLater();
+		m_debugger_window = nullptr;
+		getDebuggerWindow(); // populates m_debugger_window
+		m_debugger_window->resize(debugger_size);
+		m_debugger_window->move(debugger_pos);
+		if (debugger_is_open)
+		{
+			m_debugger_window->show();
+		}
+	}
 }
 
 void MainWindow::reloadThemeSpecificImages()
@@ -1981,6 +2016,8 @@ void MainWindow::onVMStopped()
 	m_status_resolution_widget->setText(empty_string);
 	m_status_fps_widget->setText(empty_string);
 	m_status_vps_widget->setText(empty_string);
+	m_status_speed_widget->setText(empty_string);
+	m_status_verbose_widget->setText(empty_string);
 
 	updateEmulationActions(false, false, false);
 	updateGameDependentActions();
@@ -2929,12 +2966,6 @@ void MainWindow::populateSaveStateMenu(QMenu* menu, const QString& serial, quint
 
 void MainWindow::updateGameDependentActions()
 {
-	const bool valid_serial_and_crc = (s_vm_valid && !s_current_disc_serial.isEmpty() && s_current_disc_crc != 0);
-	m_ui.menuLoadState->setEnabled(valid_serial_and_crc);
-	m_ui.actionToolbarLoadState->setEnabled(valid_serial_and_crc);
-	m_ui.menuSaveState->setEnabled(valid_serial_and_crc);
-	m_ui.actionToolbarSaveState->setEnabled(valid_serial_and_crc);
-
 	const bool can_use_pnach = (s_vm_valid && !s_current_disc_serial.isEmpty() && s_current_running_crc != 0);
 	m_ui.actionEditCheats->setEnabled(can_use_pnach);
 	m_ui.actionEditPatches->setEnabled(can_use_pnach);

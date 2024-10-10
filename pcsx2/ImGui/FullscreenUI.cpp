@@ -15,6 +15,7 @@
 #include "ImGui/FullscreenUI.h"
 #include "ImGui/ImGuiFullscreen.h"
 #include "ImGui/ImGuiManager.h"
+#include "ImGui/ImGuiOverlays.h"
 #include "Input/InputManager.h"
 #include "MTGS.h"
 #include "Patch.h"
@@ -327,7 +328,6 @@ namespace FullscreenUI
 	static s32 GetEffectiveIntSetting(SettingsInterface* bsi, const char* section, const char* key, s32 default_value);
 	static void DoCopyGameSettings();
 	static void DoClearGameSettings();
-	static void CopyGlobalControllerSettingsToGame();
 	static void ResetControllerSettings();
 	static void DoLoadInputProfile();
 	static void DoSaveInputProfile();
@@ -716,6 +716,12 @@ void FullscreenUI::OpenPauseMenu()
 {
 	if (!VMManager::HasValidVM())
 		return;
+
+	if (SaveStateSelectorUI::IsOpen())
+	{
+		SaveStateSelectorUI::Close();
+		return;
+	}
 
 	MTGS::RunOnGSThread([]() {
 		if (!ImGuiManager::InitializeFullscreenUI() || s_current_main_window != MainWindowType::None)
@@ -3716,11 +3722,6 @@ void FullscreenUI::DrawGraphicsSettingsPage(SettingsInterface* bsi, bool show_ad
 		DrawIntListSetting(bsi, FSUI_CSTR("Blending Accuracy"),
 			FSUI_CSTR("Determines the level of accuracy when emulating blend modes not supported by the host graphics API."), "EmuCore/GS",
 			"accurate_blending_unit", static_cast<int>(AccBlendLevel::Basic), s_blending_options, std::size(s_blending_options), true);
-		DrawIntListSetting(bsi, FSUI_CSTR("Texture Preloading"),
-			FSUI_CSTR(
-				"Uploads full textures to the GPU on use, rather than only the utilized regions. Can improve performance in some games."),
-			"EmuCore/GS", "texture_preloading", static_cast<int>(TexturePreloadingLevel::Off), s_preloading_options,
-			std::size(s_preloading_options), true);
 		DrawToggleSetting(
 			bsi, FSUI_CSTR("Mipmapping"), FSUI_CSTR("Enables emulation of the GS's texture mipmapping."), "EmuCore/GS", "hw_mipmap", true);
 	}
@@ -3944,7 +3945,11 @@ void FullscreenUI::DrawGraphicsSettingsPage(SettingsInterface* bsi, bool show_ad
 			s_tv_shaders, std::size(s_tv_shaders), true);
 	}
 
-	static constexpr const char* s_gsdump_compression[] = {FSUI_NSTR("Uncompressed"), FSUI_NSTR("LZMA (xz)"), FSUI_NSTR("Zstandard (zst)")};
+	static constexpr const char* s_gsdump_compression[] = {
+		FSUI_NSTR("Uncompressed"),
+		FSUI_NSTR("LZMA (xz)"),
+		FSUI_NSTR("Zstandard (zst)")
+		};
 
 	if (show_advanced_settings)
 	{
@@ -3982,6 +3987,11 @@ void FullscreenUI::DrawGraphicsSettingsPage(SettingsInterface* bsi, bool show_ad
 			"EmuCore/GS", "DisableShaderCache", false);
 		DrawToggleSetting(bsi, FSUI_CSTR("Disable Vertex Shader Expand"), FSUI_CSTR("Falls back to the CPU for expanding sprites/lines."),
 			"EmuCore/GS", "DisableVertexShaderExpand", false);
+		DrawIntListSetting(bsi, FSUI_CSTR("Texture Preloading"),
+			FSUI_CSTR(
+				"Uploads full textures to the GPU on use, rather than only the utilized regions. Can improve performance in some games."),
+			"EmuCore/GS", "texture_preloading", static_cast<int>(TexturePreloadingLevel::Off), s_preloading_options,
+			std::size(s_preloading_options), true);
 	}
 
 	EndMenuButtons();
@@ -4140,18 +4150,6 @@ void FullscreenUI::DrawMemoryCardSettingsPage()
 
 
 	EndMenuButtons();
-}
-
-void FullscreenUI::CopyGlobalControllerSettingsToGame()
-{
-	SettingsInterface* dsi = GetEditingSettingsInterface(true);
-	SettingsInterface* ssi = GetEditingSettingsInterface(false);
-
-	Pad::CopyConfiguration(dsi, *ssi, true, true, false);
-	USB::CopyConfiguration(dsi, *ssi, true, true);
-	SetSettingsChanged(dsi);
-
-	ShowToast(std::string(), FSUI_STR("Per-game controller configuration initialized with global settings."));
 }
 
 void FullscreenUI::ResetControllerSettings()
@@ -4736,6 +4734,20 @@ void FullscreenUI::DrawAdvancedSettingsPage()
 			bsi, FSUI_ICONSTR(ICON_FA_COMPACT_DISC, "CDVD Verbose Reads"), FSUI_CSTR("Logs disc reads from games."), "EmuCore", "CdvdVerboseReads", false);
 	}
 
+	static constexpr const char* s_savestate_compression_type[] = {
+		FSUI_NSTR("Uncompressed"),
+		FSUI_NSTR("Deflate64"),
+		FSUI_NSTR("Zstandard"),
+		FSUI_NSTR("LZMA2")
+	};
+
+	static constexpr const char* s_savestate_compression_ratio[] = {
+		FSUI_NSTR("Low (Fast)"),
+		FSUI_NSTR("Medium (Recommended)"),
+		FSUI_NSTR("High"),
+		FSUI_NSTR("Very High (Slow, Not Recommended)")
+	};
+
 	if (show_advanced_settings)
 	{
 		MenuHeading(FSUI_CSTR("Emotion Engine"));
@@ -4793,6 +4805,12 @@ void FullscreenUI::DrawAdvancedSettingsPage()
 		DrawToggleSetting(bsi, FSUI_CSTR("Enable IOP Recompiler"),
 			FSUI_CSTR("Performs just-in-time binary translation of 32-bit MIPS-I machine code to native code."), "EmuCore/CPU/Recompiler",
 			"EnableIOP", true);
+
+		MenuHeading(FSUI_CSTR("Savestate"));
+		DrawIntListSetting(bsi, FSUI_CSTR("Compression Method"), FSUI_CSTR("Sets the compression algorithm for savestate."), "EmuCore",
+			"SavestateCompressionType", static_cast<int>(SavestateCompressionMethod::Zstandard), s_savestate_compression_type, std::size(s_savestate_compression_type), true);
+		DrawIntListSetting(bsi, FSUI_CSTR("Compression Level"), FSUI_CSTR("Sets the compression level for savestate."), "EmuCore",
+			"SavestateCompressionRatio", static_cast<int>(SavestateCompressionLevel::Medium), s_savestate_compression_ratio, std::size(s_savestate_compression_ratio), true);
 
 		MenuHeading(FSUI_CSTR("Graphics"));
 		DrawToggleSetting(bsi, FSUI_CSTR("Use Debug Device"), FSUI_CSTR("Enables API-level validation of graphics commands."), "EmuCore/GS",
@@ -6867,7 +6885,6 @@ TRANSLATE_NOOP("FullscreenUI", "Game region copied to clipboard.");
 TRANSLATE_NOOP("FullscreenUI", "Game compatibility copied to clipboard.");
 TRANSLATE_NOOP("FullscreenUI", "Game path copied to clipboard.");
 TRANSLATE_NOOP("FullscreenUI", "Automatic");
-TRANSLATE_NOOP("FullscreenUI", "Per-game controller configuration initialized with global settings.");
 TRANSLATE_NOOP("FullscreenUI", "Controller settings reset to default.");
 TRANSLATE_NOOP("FullscreenUI", "No input profiles available.");
 TRANSLATE_NOOP("FullscreenUI", "Create New...");
@@ -6911,6 +6928,9 @@ TRANSLATE_NOOP("FullscreenUI", "Unknown");
 TRANSLATE_NOOP("FullscreenUI", "OK");
 TRANSLATE_NOOP("FullscreenUI", "Select Device");
 TRANSLATE_NOOP("FullscreenUI", "Details");
+TRANSLATE_NOOP("FullscreenUI", "The selected input profile will be used for this game.");
+TRANSLATE_NOOP("FullscreenUI", "Shared");
+TRANSLATE_NOOP("FullscreenUI", "Input Profile");
 TRANSLATE_NOOP("FullscreenUI", "Options");
 TRANSLATE_NOOP("FullscreenUI", "Copies the current global settings to this game.");
 TRANSLATE_NOOP("FullscreenUI", "Clears all settings set for this game.");
@@ -7034,8 +7054,6 @@ TRANSLATE_NOOP("FullscreenUI", "Dithering");
 TRANSLATE_NOOP("FullscreenUI", "Selects the type of dithering applies when the game requests it.");
 TRANSLATE_NOOP("FullscreenUI", "Blending Accuracy");
 TRANSLATE_NOOP("FullscreenUI", "Determines the level of accuracy when emulating blend modes not supported by the host graphics API.");
-TRANSLATE_NOOP("FullscreenUI", "Texture Preloading");
-TRANSLATE_NOOP("FullscreenUI", "Uploads full textures to the GPU on use, rather than only the utilized regions. Can improve performance in some games.");
 TRANSLATE_NOOP("FullscreenUI", "Mipmapping");
 TRANSLATE_NOOP("FullscreenUI", "Enables emulation of the GS's texture mipmapping.");
 TRANSLATE_NOOP("FullscreenUI", "Software Rendering Threads");
@@ -7152,6 +7170,8 @@ TRANSLATE_NOOP("FullscreenUI", "Disable Shader Cache");
 TRANSLATE_NOOP("FullscreenUI", "Prevents the loading and saving of shaders/pipelines to disk.");
 TRANSLATE_NOOP("FullscreenUI", "Disable Vertex Shader Expand");
 TRANSLATE_NOOP("FullscreenUI", "Falls back to the CPU for expanding sprites/lines.");
+TRANSLATE_NOOP("FullscreenUI", "Texture Preloading");
+TRANSLATE_NOOP("FullscreenUI", "Uploads full textures to the GPU on use, rather than only the utilized regions. Can improve performance in some games.");
 TRANSLATE_NOOP("FullscreenUI", "Audio Control");
 TRANSLATE_NOOP("FullscreenUI", "Controls the volume of the audio played on the host.");
 TRANSLATE_NOOP("FullscreenUI", "Controls the volume of the audio played on the host when fast forwarding.");
@@ -7171,8 +7191,6 @@ TRANSLATE_NOOP("FullscreenUI", "If not set, this card will be considered unplugg
 TRANSLATE_NOOP("FullscreenUI", "The selected memory card image will be used for this slot.");
 TRANSLATE_NOOP("FullscreenUI", "Removes the current card from the slot.");
 TRANSLATE_NOOP("FullscreenUI", "Configuration");
-TRANSLATE_NOOP("FullscreenUI", "Uses game-specific settings for controllers for this game.");
-TRANSLATE_NOOP("FullscreenUI", "Copies the global controller configuration to this game.");
 TRANSLATE_NOOP("FullscreenUI", "Resets all configuration to defaults (including bindings).");
 TRANSLATE_NOOP("FullscreenUI", "Replaces these settings with a previously saved input profile.");
 TRANSLATE_NOOP("FullscreenUI", "Stores the current settings to an input profile.");
@@ -7234,6 +7252,11 @@ TRANSLATE_NOOP("FullscreenUI", "Runs VU1 instantly. Provides a modest speed impr
 TRANSLATE_NOOP("FullscreenUI", "I/O Processor");
 TRANSLATE_NOOP("FullscreenUI", "Enable IOP Recompiler");
 TRANSLATE_NOOP("FullscreenUI", "Performs just-in-time binary translation of 32-bit MIPS-I machine code to native code.");
+TRANSLATE_NOOP("FullscreenUI", "Savestate");
+TRANSLATE_NOOP("FullscreenUI", "Compression Method");
+TRANSLATE_NOOP("FullscreenUI", "Sets the compression algorithm for savestate.");
+TRANSLATE_NOOP("FullscreenUI", "Compression Level");
+TRANSLATE_NOOP("FullscreenUI", "Sets the compression level for savestate.");
 TRANSLATE_NOOP("FullscreenUI", "Graphics");
 TRANSLATE_NOOP("FullscreenUI", "Use Debug Device");
 TRANSLATE_NOOP("FullscreenUI", "Enables API-level validation of graphics commands.");
@@ -7529,6 +7552,12 @@ TRANSLATE_NOOP("FullscreenUI", "PS1");
 TRANSLATE_NOOP("FullscreenUI", "Negative");
 TRANSLATE_NOOP("FullscreenUI", "Positive");
 TRANSLATE_NOOP("FullscreenUI", "Chop/Zero (Default)");
+TRANSLATE_NOOP("FullscreenUI", "Deflate64");
+TRANSLATE_NOOP("FullscreenUI", "Zstandard");
+TRANSLATE_NOOP("FullscreenUI", "LZMA2");
+TRANSLATE_NOOP("FullscreenUI", "Low (Fast)");
+TRANSLATE_NOOP("FullscreenUI", "Medium (Recommended)");
+TRANSLATE_NOOP("FullscreenUI", "Very High (Slow, Not Recommended)");
 TRANSLATE_NOOP("FullscreenUI", "Game Grid");
 TRANSLATE_NOOP("FullscreenUI", "Type");
 TRANSLATE_NOOP("FullscreenUI", "Serial");
@@ -7619,8 +7648,6 @@ TRANSLATE_NOOP("FullscreenUI", "Folder Memory Card Filter");
 TRANSLATE_NOOP("FullscreenUI", "Load Profile");
 TRANSLATE_NOOP("FullscreenUI", "Save Profile");
 TRANSLATE_NOOP("FullscreenUI", "Create");
-TRANSLATE_NOOP("FullscreenUI", "Per-Game Configuration");
-TRANSLATE_NOOP("FullscreenUI", "Copy Global Settings");
 TRANSLATE_NOOP("FullscreenUI", "Enable SDL Input Source");
 TRANSLATE_NOOP("FullscreenUI", "SDL DualShock 4 / DualSense Enhanced Mode");
 TRANSLATE_NOOP("FullscreenUI", "SDL DualSense Player LED");

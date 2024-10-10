@@ -24,11 +24,14 @@
 #include "SettingWidgetBinder.h"
 
 #include "ui_USBBindingWidget_Buzz.h"
+#include "ui_USBBindingWidget_DenshaCon.h"
 #include "ui_USBBindingWidget_DrivingForce.h"
 #include "ui_USBBindingWidget_Gametrak.h"
 #include "ui_USBBindingWidget_GTForce.h"
 #include "ui_USBBindingWidget_GunCon2.h"
 #include "ui_USBBindingWidget_RealPlay.h"
+#include "ui_USBBindingWidget_RyojouhenCon.h"
+#include "ui_USBBindingWidget_ShinkansenCon.h"
 #include "ui_USBBindingWidget_TranceVibrator.h"
 
 ControllerBindingWidget::ControllerBindingWidget(QWidget* parent, ControllerSettingsWindow* dialog, u32 port)
@@ -1026,7 +1029,8 @@ QIcon USBDeviceWidget::getIcon() const
 		{"guncon2", "guncon2-line"}, // GunCon 2
 		{"DJTurntable", "dj-hero-line"}, // DJ Hero TurnTable
 		{"Gametrak", "gametrak-line"}, // Gametrak Device
-		{"RealPlay", "realplay-sphere-line"} // RealPlay Device
+		{"RealPlay", "realplay-sphere-line"}, // RealPlay Device
+		{"TrainController", "train-line"} // Train Controller
 	};
 
 	for (size_t i = 0; i < std::size(icons); i++)
@@ -1390,6 +1394,24 @@ USBBindingWidget* USBBindingWidget::createInstance(
 	{
 		Ui::USBBindingWidget_Buzz().setupUi(widget);
 		has_template = true;
+	}
+	else if (type == "TrainController")
+	{
+		if (subtype == 0)
+		{
+			Ui::USBBindingWidget_DenshaCon().setupUi(widget);
+			has_template = true;
+		}
+		else if (subtype == 1)
+		{
+			Ui::USBBindingWidget_ShinkansenCon().setupUi(widget);
+			has_template = true;
+		}
+		else if (subtype == 2)
+		{
+			Ui::USBBindingWidget_RyojouhenCon().setupUi(widget);
+			has_template = true;
+		}
 	}
 	else if (type == "Gametrak")
 	{

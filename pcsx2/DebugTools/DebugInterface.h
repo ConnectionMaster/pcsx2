@@ -32,15 +32,9 @@ enum BreakPointCpu
 	BREAKPOINT_IOP_AND_EE = 0x03
 };
 
-class DebugInterface
+class MemoryReader
 {
 public:
-	enum RegisterType
-	{
-		NORMAL,
-		SPECIAL
-	};
-
 	virtual u32 read8(u32 address) = 0;
 	virtual u32 read8(u32 address, bool& valid) = 0;
 	virtual u32 read16(u32 address) = 0;
@@ -49,6 +43,17 @@ public:
 	virtual u32 read32(u32 address, bool& valid) = 0;
 	virtual u64 read64(u32 address) = 0;
 	virtual u64 read64(u32 address, bool& valid) = 0;
+};
+
+class DebugInterface : public MemoryReader
+{
+public:
+	enum RegisterType
+	{
+		NORMAL,
+		SPECIAL
+	};
+
 	virtual u128 read128(u32 address) = 0;
 	virtual void write8(u32 address, u8 value) = 0;
 	virtual void write16(u32 address, u16 value) = 0;
@@ -79,6 +84,7 @@ public:
 	[[nodiscard]] virtual SymbolGuardian& GetSymbolGuardian() const = 0;
 	[[nodiscard]] virtual std::vector<std::unique_ptr<BiosThread>> GetThreadList() const = 0;
 
+	bool evaluateExpression(const char* expression, u64& dest);
 	bool initExpression(const char* exp, PostfixExpression& dest);
 	bool parseExpression(PostfixExpression& exp, u64& dest);
 	bool isAlive();
@@ -139,7 +145,6 @@ public:
 	BreakPointCpu getCpuType() override;
 };
 
-
 class R3000DebugInterface : public DebugInterface
 {
 public:
@@ -180,6 +185,25 @@ public:
 	bool isValidAddress(u32 address) override;
 	u32 getCycles() override;
 	BreakPointCpu getCpuType() override;
+};
+
+// Provides access to the loadable segments from the ELF as they are on disk.
+class ElfMemoryReader : public MemoryReader
+{
+public:
+	ElfMemoryReader(const ccc::ElfFile& elf);
+
+	u32 read8(u32 address) override;
+	u32 read8(u32 address, bool& valid) override;
+	u32 read16(u32 address) override;
+	u32 read16(u32 address, bool& valid) override;
+	u32 read32(u32 address) override;
+	u32 read32(u32 address, bool& valid) override;
+	u64 read64(u32 address) override;
+	u64 read64(u32 address, bool& valid) override;
+
+protected:
+	const ccc::ElfFile& m_elf;
 };
 
 extern R5900DebugInterface r5900Debug;

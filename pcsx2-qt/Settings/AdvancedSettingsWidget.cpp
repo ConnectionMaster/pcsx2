@@ -56,6 +56,18 @@ AdvancedSettingsWidget::AdvancedSettingsWidget(SettingsWindow* dialog, QWidget* 
 	SettingWidgetBinder::BindWidgetToFloatSetting(sif, m_ui.ntscFrameRate, "EmuCore/GS", "FramerateNTSC", 59.94f);
 	SettingWidgetBinder::BindWidgetToFloatSetting(sif, m_ui.palFrameRate, "EmuCore/GS", "FrameratePAL", 50.00f);
 
+	SettingWidgetBinder::BindWidgetToIntSetting(
+		sif, m_ui.savestateCompressionMethod, "EmuCore", "SavestateCompressionType", static_cast<int>(SavestateCompressionMethod::Zstandard));
+
+	SettingWidgetBinder::BindWidgetToIntSetting(
+		sif, m_ui.savestateCompressionLevel, "EmuCore", "SavestateCompressionRatio", static_cast<int>(SavestateCompressionLevel::Medium));
+
+	connect(m_ui.savestateCompressionMethod, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		&AdvancedSettingsWidget::onSavestateCompressionTypeChanged);
+
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.backupSaveStates, "EmuCore", "BackupSavestate", true);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.saveStateOnShutdown, "EmuCore", "SaveStateOnShutdown", false);
+
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.pineEnable, "EmuCore", "EnablePINE", false);
 	SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.pineSlot, "EmuCore", "PINESlot", 28011);
 
@@ -123,6 +135,20 @@ AdvancedSettingsWidget::AdvancedSettingsWidget(SettingsWindow* dialog, QWidget* 
 
 	dialog->registerWidgetHelp(m_ui.patches, tr("Enable Compatibility Patches"), tr("Checked"),
 		tr("Automatically loads and applies compatibility patches to known problematic games."));
+
+	dialog->registerWidgetHelp(m_ui.savestateCompressionMethod, tr("Savestate Compression Method"), tr("Zstandard"),
+		tr("Determines the algorithm to be used when compressing savestates."));
+
+	dialog->registerWidgetHelp(m_ui.savestateCompressionLevel, tr("Savestate Compression Level"), tr("Medium"),
+		tr("Determines the level to be used when compressing savestates."));
+
+	dialog->registerWidgetHelp(m_ui.saveStateOnShutdown, tr("Save State On Shutdown"), tr("Unchecked"),
+		tr("Automatically saves the emulator state when powering down or exiting. You can then "
+		   "resume directly from where you left off next time."));
+
+	dialog->registerWidgetHelp(m_ui.backupSaveStates, tr("Create Save State Backups"), tr("Checked"),
+		//: Do not translate the ".backup" extension.
+		tr("Creates a backup copy of a save state if it already exists when the save is created. The backup copy has a .backup suffix."));
 }
 
 AdvancedSettingsWidget::~AdvancedSettingsWidget() = default;
@@ -188,4 +214,11 @@ void AdvancedSettingsWidget::setClampingMode(int vunum, int index)
 		"EmuCore/CPU/Recompiler", (vunum >= 0 ? ((vunum == 0) ? "vu0ExtraOverflow" : "vu1ExtraOverflow") : "fpuExtraOverflow"), second);
 	m_dialog->setBoolSettingValue(
 		"EmuCore/CPU/Recompiler", (vunum >= 0 ? ((vunum == 0) ? "vu0Overflow" : "vu1Overflow") : "fpuOverflow"), first);
+}
+
+void AdvancedSettingsWidget::onSavestateCompressionTypeChanged()
+{
+	const bool uncompressed = (m_dialog->getEffectiveIntValue("EmuCore", "SavestateCompressionType", static_cast<int>(SavestateCompressionMethod::Zstandard)) ==
+							   static_cast<int>(SavestateCompressionMethod::Uncompressed));
+	m_ui.savestateCompressionLevel->setDisabled(uncompressed);
 }

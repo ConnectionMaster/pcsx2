@@ -117,6 +117,7 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
 	SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.osdPerformancePos, "EmuCore/GS", "OsdPerformancePos", static_cast<int>(OsdOverlayPos::TopRight));
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.osdShowSpeed, "EmuCore/GS", "OsdShowSpeed", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.osdShowFPS, "EmuCore/GS", "OsdShowFPS", false);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.osdShowVPS, "EmuCore/GS", "OsdShowVPS", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.osdShowCPU, "EmuCore/GS", "OsdShowCPU", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.osdShowGPU, "EmuCore/GS", "OsdShowGPU", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.osdShowResolution, "EmuCore/GS", "OsdShowResolution", false);
@@ -506,7 +507,7 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
 			   "FMV resolution will remain unchanged, as the video files are pre-rendered."));
 
 		dialog->registerWidgetHelp(
-			m_ui.mipmapping, tr("Mipmapping"), tr("Checked"), tr("Enables mipmapping, which some games require to render correctly."));
+			m_ui.mipmapping, tr("Mipmapping"), tr("Checked"), tr("Enables mipmapping, which some games require to render correctly. Mipmapping uses progressively lower resolution variants of textures at progressively further distances to reduce processing load and avoid visual artifacts."));
 
 		dialog->registerWidgetHelp(
 			m_ui.textureFiltering, tr("Texture Filtering"), tr("Bilinear (PS2)"),
@@ -718,6 +719,9 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
 
 		dialog->registerWidgetHelp(m_ui.osdShowFPS, tr("Show FPS"), tr("Unchecked"),
 			tr("Shows the internal frame rate of the game in the top-right corner of the display."));
+
+		dialog->registerWidgetHelp(m_ui.osdShowVPS, tr("Show VPS"), tr("Unchecked"),
+			tr("Shows the vsync rate of the emulator in the top-right corner of the display."));
 
 		dialog->registerWidgetHelp(m_ui.osdShowSpeed, tr("Show Speed Percentages"), tr("Unchecked"),
 			tr("Shows the current emulation speed of the system in the top-right corner of the display as a percentage."));
